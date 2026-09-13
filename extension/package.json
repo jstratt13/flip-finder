@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "//": "Not a build target. Chrome ignores this file; it exists so Node treats the content scripts as CommonJS rather than inheriting \"type\": \"module\" from the repo root, which lets the test suite require the exact files the browser loads.",
+  "type": "commonjs"
+}

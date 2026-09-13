@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Flip Finder Capture",
+  "version": "0.1.0",
+  "description": "Captures marketplace listings you browse and sends them to the Flip Finder worker.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://*.craigslist.org/*",
+    "https://www.facebook.com/*",
+    "https://*.workers.dev/*",
+    "http://localhost:8787/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.craigslist.org/*",
+        "https://www.facebook.com/marketplace*"
+      ],
+      "js": ["src/adapters.js", "src/capture.js", "src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "src/options.html",
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "Flip Finder"
+  }
+}

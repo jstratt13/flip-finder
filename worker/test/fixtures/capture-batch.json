@@ -1,0 +1,97 @@
+{
+  "items": [
+    {
+      "source": "craigslist",
+      "source_id": "7948505592",
+      "url": "https://www.craigslist.org/view/d/santa-ana-redragon-pollux-pro-k628/kMwyUJ1YTkwdojm8An61bg",
+      "title": "Redragon Pollux Pro K628 mechanical keyboard",
+      "price": 20,
+      "location_name": null,
+      "thumb_url": "https://images.craigslist.org/d/7948505592/01616_6Vn5qADT0Bm_0CI0lM_600x450.jpg",
+      "acquisition_mode": "pickup",
+      "capture_phase": "grid"
+    },
+    {
+      "source": "craigslist",
+      "source_id": "7946786144",
+      "url": "https://www.craigslist.org/view/d/santa-ana-apple-late-imac-screen/9ofjF1WooNS1aZneUhfX3o",
+      "title": "Apple late-2013 21.5\" iMac screen",
+      "price": 75,
+      "location_name": "Irvine, CA",
+      "thumb_url": "https://images.craigslist.org/d/7946786144/00h0h_jvf3ad9RdPv_0CI0t2_600x450.jpg",
+      "acquisition_mode": "pickup",
+      "capture_phase": "grid"
+    },
+    {
+      "source": "craigslist",
+      "source_id": "7946786114",
+      "url": "https://www.craigslist.org/view/d/santa-ana-apple-imac-hdd-ssd-cable/nsF8K72f81g9erB3nqtKR6",
+      "title": "Apple iMac HDD/SSD cable",
+      "price": 15,
+      "location_name": "Santa Ana, CA",
+      "thumb_url": "https://images.craigslist.org/d/7946786114/00O0O_eB2zFNV4XXJ_0CI0t2_600x450.jpg",
+      "acquisition_mode": "pickup",
+      "capture_phase": "grid"
+    },
+    {
+      "source": "craigslist",
+      "source_id": "7948505592",
+      "url": "https://www.craigslist.org/view/d/santa-ana-redragon-pollux-pro-k628/kMwyUJ1YTkwdojm8An61bg",
+      "title": "Redragon Pollux Pro K628 mechanical keyboard",
+      "price": 20,
+      "description": "Selling my old keyboard. It works, just wanted something different. Light scratches on the case.",
+      "condition_raw": null,
+      "lat": 33.769986,
+      "lon": -117.85841,
+      "posted_at": 1784968416000,
+      "acquisition_mode": "pickup",
+      "capture_phase": "detail"
+    },
+    {
+      "source": "facebook",
+      "source_id": "1122334455",
+      "url": "https://www.facebook.com/marketplace/item/1122334455",
+      "title": "PS5 Slim Disc Edition - like new, barely used",
+      "price": 320,
+      "lat": 33.6595,
+      "lon": -117.9988,
+      "location_name": "Costa Mesa, CA",
+      "acquisition_mode": "pickup",
+      "capture_phase": "grid"
+    },
+    {
+      "source": "ebay",
+      "source_id": "v1|3345566778|0",
+      "url": "https://www.ebay.com/itm/3345566778",
+      "title": "Sonos Connect:Amp - for parts, does not power on",
+      "price": 85,
+      "condition_raw": "For parts or not working",
+      "acquisition_mode": "shipped",
+      "inbound_ship": 18.5,
+      "lat": 40.7128,
+      "lon": -74.006,
+      "location_name": "Brooklyn, NY",
+      "capture_phase": "grid"
+    },
+    {
+      "source": "craigslist",
+      "source_id": "7900000001",
+      "title": "Free pile of cables",
+      "price": null,
+      "acquisition_mode": "pickup",
+      "capture_phase": "grid"
+    },
+    {
+      "source": "craigslist",
+      "source_id": "",
+      "title": "Broken record with no id",
+      "price": 10
+    },
+    {
+      "source": "mercari",
+      "source_id": "999",
+      "title": "Unsupported source should be rejected",
+      "price": 50
+    }
+  ]
+}

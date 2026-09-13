@@ -1,0 +1,19 @@
+{
+  "name": "Flip Finder",
+  "short_name": "Flip",
+  "description": "Ranked resale opportunities across Facebook Marketplace, Craigslist and eBay.",
+  "start_url": "/flip-finder/",
+  "scope": "/flip-finder/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f3ef",
+  "theme_color": "#f4f3ef",
+  "icons": [
+    {
+      "src": "/flip-finder/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

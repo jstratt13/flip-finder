@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Flip Finder Settings</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body class="options">
+    <h1>Flip Finder</h1>
+
+    <label for="worker_url">Worker URL</label>
+    <input id="worker_url" type="text" placeholder="https://flip-finder-worker.workers.dev" />
+
+    <label for="ingest_key">Ingest key</label>
+    <input id="ingest_key" type="password" placeholder="shared secret" />
+
+    <button id="save">Save</button>
+    <p id="status" class="status"></p>
+
+    <script src="options.js"></script>
+  </body>
+</html>

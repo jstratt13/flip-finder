@@ -1,0 +1,18 @@
+{
+  "name": "flip-finder-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787 --local",
+    "db:migrate": "wrangler d1 migrations apply flip-finder --local",
+    "db:migrate:remote": "wrangler d1 migrations apply flip-finder --remote",
+    "db:status": "wrangler d1 migrations list flip-finder --local",
+    "db:status:remote": "wrangler d1 migrations list flip-finder --remote",
+    "deploy": "wrangler deploy",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.94.0"
+  }
+}

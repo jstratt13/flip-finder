@@ -1,0 +1,28 @@
+name = "flip-finder-worker"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# Public, non-secret config. Secrets go through `wrangler secret put` and never
+# appear in this file: ADMIN_KEY, JWT_SECRET, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET.
+[vars]
+# Pins CORS to the dashboard's origin. Leaving this unset allows any origin,
+# which is fine locally and not what you want in production.
+ALLOWED_ORIGINS = "https://jstratt13.github.io"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "flip-finder"
+database_id = "7cffbd97-4aa0-4a8c-9580-9b265017a503"
+# Schema changes go in migrations/, never by editing an applied file.
+#   npm run db:migrate          (local)
+#   npm run db:migrate:remote   (production)
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "ad9b53ad0e1645a9aff331289242fd07"
+
+# Resolves matching, comps and scoring for newly captured listings. The run is
+# capped at 40 fresh eBay lookups, well inside the daily quota at this cadence.
+[triggers]
+crons = ["*/15 * * * *"]
