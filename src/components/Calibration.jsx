@@ -35,6 +35,73 @@ function Suggestion({ label, current, suggested, sales }) {
   );
 }
 
+function LocalMarket({ lm }) {
+  if (!lm || !lm.products_compared) return null;
+
+  const pct = (n) => (n == null ? '—' : `${Math.round(n * 100)}%`);
+  const spread = lm.p75_ratio != null ? lm.p75_ratio - lm.p25_ratio : null;
+  const noisy = spread != null && spread > 0.3;
+
+  return (
+    <>
+      <h4>Local market vs national</h4>
+
+      {!lm.ready ? (
+        <p className="hint">
+          {lm.products_compared} of {lm.min_products_needed} products compared. Needs sightings of
+          the same item both locally and on eBay — keep browsing and this fills in.
+        </p>
+      ) : (
+        <>
+          <p className="bias balanced" style={{ marginBottom: 10 }}>
+            Local asks run <strong>{pct(lm.median_ratio)}</strong> of national, across{' '}
+            {lm.products_compared} products.
+          </p>
+
+          <ul className="mix">
+            <li>
+              <span className="sug-label">Facebook price factor</span>
+              <span className="sug-move">
+                <b>{lm.current_price_factor}</b> → <b>{lm.suggested_price_factor}</b>
+              </span>
+              <span className="sug-n">{lm.local_listings_used} listings</span>
+            </li>
+            <li>
+              <span className="sug-label">Spread (25th–75th)</span>
+              <span className="sug-move">
+                {pct(lm.p25_ratio)} – {pct(lm.p75_ratio)}
+              </span>
+            </li>
+          </ul>
+
+          {lm.was_clamped && (
+            <p className="warn-note">
+              <strong>Clamped.</strong> The raw measurement was{' '}
+              <b>{lm.raw_suggestion}</b>, outside the {lm.bounds.min}–{lm.bounds.max} band a real
+              market plausibly produces. Usually a thin or skewed sample rather than a genuine
+              effect — worth a look before trusting it.
+            </p>
+          )}
+
+          {noisy && (
+            <p className="warn-note">
+              <strong>Wide spread.</strong> Products disagree with each other by more than 30
+              points, so this median isn't describing a consistent market difference yet. Treat it
+              as weak until more products land.
+            </p>
+          )}
+
+          <p className="hint">
+            Both sides are asking prices, so this measures how local <em>asks</em> compare to
+            national ones — not how much harder buyers haggle on either platform. Only recorded
+            sales close that gap.
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
 export default function Calibration({ data }) {
   if (!data) return null;
 
@@ -54,6 +121,10 @@ export default function Calibration({ data }) {
         <div className="bar" role="img" aria-label={`${have} of ${need}`}>
           <span style={{ width: `${Math.min(100, (have / need) * 100)}%` }} />
         </div>
+
+        {/* Needs no sales at all, only browsing, so it can be useful long
+            before the outcome history is. */}
+        <LocalMarket lm={data.local_market} />
       </section>
     );
   }
@@ -97,6 +168,8 @@ export default function Calibration({ data }) {
           <dd>{data.sales_with_prediction}</dd>
         </div>
       </dl>
+
+      <LocalMarket lm={data.local_market} />
 
       <h4>Where you actually sell</h4>
       <ul className="mix">

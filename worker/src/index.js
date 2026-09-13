@@ -2,7 +2,7 @@ import { ingestBatch } from './ingest.js';
 import { resolvePending } from './resolve.js';
 import { HOME, SCORING } from './config.js';
 import { CATEGORIES } from './categorize.js';
-import { calibrate } from './calibrate.js';
+import { calibrate, localMarketRatio } from './calibrate.js';
 import {
   authenticate, changePassword, contributorForKey, createContributor,
   listContributors, rotateIngestKey, signJWT, verifyJWT,
@@ -335,7 +335,25 @@ async function handleInventory(request, env) {
 }
 
 async function handleCalibration(request, env) {
-  return json(calibrate(await outcomeRows(env)));
+  // Pairs every product that has a national comp with the local sightings of
+  // the same product. Bulky goods are excluded: their comps are already local,
+  // so comparing them to themselves would measure nothing.
+  const { results: pairs } = await env.DB.prepare(
+    `SELECT m.product_key, c.active_median AS ebay_median, l.price
+     FROM listing_matches m
+     JOIN comps c ON c.product_key = m.product_key
+     JOIN listings l ON l.id = m.listing_id
+     WHERE c.source = 'ebay'
+       AND c.active_median > 0
+       AND l.source IN ('facebook', 'craigslist')
+       AND l.price > 0
+       AND l.status = 'active'`
+  ).all();
+
+  return json({
+    ...calibrate(await outcomeRows(env)),
+    local_market: localMarketRatio(pairs),
+  });
 }
 
 // Freezes the current estimate at purchase time. Calibration compares against
