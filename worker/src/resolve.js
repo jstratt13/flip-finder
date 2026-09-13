@@ -2,6 +2,7 @@ import { matchProduct } from './match.js';
 import { fetchComps } from './ebay.js';
 import { fetchLocalComps } from './localcomps.js';
 import { scoreListing } from './score.js';
+import { FRESHNESS } from './config.js';
 
 // eBay Browse allows roughly 5k calls/day and each product costs two, so cap
 // how many fresh lookups one run can trigger. Cached products, and local comps
@@ -37,12 +38,27 @@ function upsertComp(db, c) {
     );
 }
 
+// Listings that have gone unseen long enough to be treated as removed. Uses
+// last_seen rather than first_seen deliberately: an item you re-encounter every
+// week is demonstrably still listed no matter how old the post is.
+export async function sweepStale(db, now = Date.now()) {
+  const cutoff = now - FRESHNESS.gone_after_days * 24 * 60 * 60 * 1000;
+  const { meta } = await db
+    .prepare("UPDATE listings SET status = 'gone' WHERE status = 'active' AND last_seen < ?")
+    .bind(cutoff)
+    .run();
+  return meta?.changes ?? 0;
+}
+
 export async function resolvePending(
   env,
   { limit = 200, fetchImpl = fetch, retryUnscoredMs = RETRY_UNSCORED_MS } = {}
 ) {
   const db = env.DB;
   const now = Date.now();
+
+  // Cheap, and keeps dead listings from accumulating at the top of the ranking.
+  const swept = await sweepStale(db, now);
 
   const { results: pending } = await db
     .prepare(
@@ -59,7 +75,7 @@ export async function resolvePending(
     .all();
 
   if (!pending.length) {
-    return { pending: 0, matched: 0, scored: 0, comp_fetches: 0, local_comps: 0 };
+    return { pending: 0, matched: 0, scored: 0, comp_fetches: 0, local_comps: 0, swept };
   }
 
   const matches = new Map();
@@ -199,6 +215,7 @@ export async function resolvePending(
     scored,
     comp_fetches: fetches,
     local_comps: localComps,
+    swept,
     products: keys.length,
   };
 }

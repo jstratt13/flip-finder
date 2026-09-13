@@ -4,6 +4,7 @@ import Login from './components/Login.jsx';
 import Filters from './components/Filters.jsx';
 import Listings from './components/Listings.jsx';
 import Inventory from './components/Inventory.jsx';
+import Captured from './components/Captured.jsx';
 import Calibration from './components/Calibration.jsx';
 import Detail from './components/Detail.jsx';
 import PasswordChange from './components/PasswordChange.jsx';
@@ -28,6 +29,7 @@ export default function App() {
   const [rows, setRows] = useState([]);
   const [owned, setOwned] = useState([]);
   const [calibration, setCalibration] = useState(null);
+  const [captured, setCaptured] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -56,6 +58,13 @@ export default function App() {
     setError(null);
 
     try {
+      if (view === 'captured') {
+        const data = await api.captured(filters.source);
+        if (seq !== requestSeq.current) return;
+        setCaptured(data);
+        return;
+      }
+
       if (view === 'inventory') {
         const [data, calib] = await Promise.all([api.inventory(), api.calibration()]);
         if (seq !== requestSeq.current) return;
@@ -137,6 +146,13 @@ export default function App() {
         </button>
         <button
           type="button"
+          className={view === 'captured' ? 'view on' : 'view'}
+          onClick={() => setView('captured')}
+        >
+          Captured
+        </button>
+        <button
+          type="button"
           className={view === 'inventory' ? 'view on' : 'view'}
           onClick={() => setView('inventory')}
         >
@@ -156,9 +172,13 @@ export default function App() {
 
       <main>
         {error && <p className="error">{error}</p>}
-        {view === 'opportunities' ? (
+        {view === 'opportunities' && (
           <Listings rows={rows} loading={loading} onOpen={setDetail} />
-        ) : (
+        )}
+        {view === 'captured' && (
+          <Captured data={captured} loading={loading} onOpen={setDetail} />
+        )}
+        {view === 'inventory' && (
           <>
             <Calibration data={calibration} />
             <Inventory items={owned} loading={loading} onOpen={setDetail} />

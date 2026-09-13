@@ -140,6 +140,17 @@ export default function Detail({ listing, onClose, onChanged }) {
               <Row label="Estimated profit" value={money(listing.profit)} strong />
               <Row label="Return" value={pct(listing.roi)} />
               <Row label="Confidence" value={listing.confidence?.toFixed(2) ?? '—'} />
+              {listing.price_drop_pct > 0 && (
+                <Row
+                  label="Seller has dropped"
+                  note={
+                    listing.days_listed
+                      ? `from ${money(listing.original_price)} over ${Math.round(listing.days_listed)} days`
+                      : `from ${money(listing.original_price)}`
+                  }
+                  value={`−${Math.round(listing.price_drop_pct * 100)}%`}
+                />
+              )}
             </section>
           )}
 

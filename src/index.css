@@ -472,6 +472,15 @@ main { padding-bottom: 20px; }
 .pill.low { background: #fbeceb; border-color: #edc9c6; color: var(--loss); }
 .pill.quiet { background: var(--bg); }
 
+/* A seller who has already come down. Distinct from the semantic
+   good/warning/bad colours — it's information, not a judgement. */
+.pill.drop {
+  background: #ede9fb;
+  border-color: #cfc4f2;
+  color: #5b3fa8;
+  font-weight: 700;
+}
+
 /* ---------- calibration ---------- */
 
 .calib {
@@ -578,6 +587,102 @@ main { padding-bottom: 20px; }
 
 .calib .hint { margin-top: 10px; max-width: 58ch; }
 .calib code { font-size: 12px; background: var(--bg); padding: 1px 4px; border-radius: 3px; }
+
+/* ---------- captured: a dense diagnostic list, not cards ---------- */
+
+.tally {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin: 0;
+  padding: 12px var(--pad);
+}
+
+.tally li {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 100px;
+  padding: 3px 10px;
+}
+
+.tally li b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.tally li.ok { border-color: #bcdfc9; background: #e8f3ec; }
+.tally li.ok b { color: var(--gain); }
+.tally li.warn { border-color: #edc9c6; background: #fbeceb; }
+.tally li.warn b { color: var(--loss); }
+.tally li.info { border-color: #eed6a8; background: #fdf3e3; }
+.tally li.info b { color: var(--thin); }
+
+.rows { list-style: none; margin: 0; padding: 0; }
+
+.rows li + li { border-top: 1px solid var(--line); }
+
+.row-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "src title price"
+    "src reason age";
+  gap: 1px 10px;
+  align-items: baseline;
+  padding: 9px var(--pad);
+  background: none;
+  border: none;
+  text-align: left;
+}
+
+.row-item:hover { background: var(--surface); }
+
+.r-src {
+  grid-area: src;
+  align-self: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.r-title {
+  grid-area: title;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.r-price {
+  grid-area: price;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.r-reason { grid-area: reason; font-size: 12px; color: var(--muted); }
+.r-reason.ok { color: var(--gain); font-weight: 600; }
+.r-reason.warn { color: var(--loss); }
+.r-reason.info { color: var(--thin); }
+
+.r-age {
+  grid-area: age;
+  font-size: 11.5px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 640px) {
+  .row-item {
+    grid-template-columns: 38px minmax(0, 1fr) 150px 90px 54px;
+    grid-template-areas: "src title reason price age";
+    align-items: center;
+  }
+  .r-reason { text-align: left; }
+}
 
 .empty { padding: 28px var(--pad); color: var(--muted); font-size: 14px; max-width: 46ch; }
 .empty-title { color: var(--accent); font-weight: 700; margin: 0 0 6px; }

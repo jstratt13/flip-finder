@@ -196,6 +196,14 @@ async function handleListings(request, env) {
     binds.push(maxDistance);
   }
 
+  // Optional tighter freshness than the 30-day sweep, for when you only want
+  // things confirmed recently.
+  const maxAgeDays = Number(u.searchParams.get('max_age_days')) || null;
+  if (maxAgeDays) {
+    where.push('l.last_seen >= ?');
+    binds.push(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
+  }
+
   // An empty selection means no filter, same as omitting the parameter.
   const cats = (u.searchParams.get('categories') ?? '')
     .split(',')
@@ -226,7 +234,12 @@ async function handleListings(request, env) {
 
   const sql = `
     SELECT l.id, l.source, l.title, l.url, l.price, l.thumb_url, l.location_name,
-           l.distance_mi, l.geo_source, l.acquisition_mode, l.category,
+           l.distance_mi, l.geo_source, l.acquisition_mode, l.category, l.last_seen, l.first_seen,
+           -- Price history was recorded from the start and never read. The
+           -- earliest observation is what a drop is measured against.
+           (SELECT p.price FROM price_history p WHERE p.listing_id = l.id
+             ORDER BY p.observed_at ASC LIMIT 1) AS first_price,
+           (SELECT MIN(p.observed_at) FROM price_history p WHERE p.listing_id = l.id) AS first_priced_at,
            c.band AS condition_band, c.confidence AS condition_confidence,
            s.profit, s.roi, s.confidence, s.score, s.anchor_value, s.anchor_source,
            s.est_net_blended, s.acquisition_cost
@@ -238,7 +251,97 @@ async function handleListings(request, env) {
     LIMIT ?`;
 
   const { results } = await env.DB.prepare(sql).bind(...binds, limit).all();
-  return json({ count: results.length, listings: results });
+
+  const listings = results.map((r) => {
+    // A seller who has already come down is demonstrably willing to move, which
+    // is worth knowing before you go and negotiate. Reported, not scored — see
+    // the note in the dashboard for why the direction isn't settled.
+    const dropped =
+      r.first_price > 0 && r.price != null && r.price < r.first_price
+        ? {
+            price_drop_pct: (r.first_price - r.price) / r.first_price,
+            original_price: r.first_price,
+            days_listed:
+              r.first_priced_at != null
+                ? (Date.now() - r.first_priced_at) / (24 * 60 * 60 * 1000)
+                : null,
+          }
+        : { price_drop_pct: null, original_price: null, days_listed: null };
+
+    return { ...r, first_price: undefined, first_priced_at: undefined, ...dropped };
+  });
+
+  return json({ count: listings.length, listings });
+}
+
+// Everything captured, with why each one isn't in the ranking.
+//
+// Without this the dashboard looks identical whether nothing good turned up
+// today or capture broke three weeks ago. The reason per listing is the whole
+// point — "no product match" and "awaiting comps" call for very different
+// responses, and neither is visible from an empty Opportunities tab.
+function rankingReason(r, gates) {
+  if (r.acquired) return { code: 'acquired', label: 'Bought' };
+  if (r.status !== 'active') return { code: 'gone', label: 'No longer listed' };
+  if (r.price == null) return { code: 'no_price', label: 'No price' };
+  if (!r.product_key) return { code: 'no_match', label: 'No product match' };
+  if (r.active_median == null && r.retail_price == null) {
+    return { code: 'no_comps', label: 'Awaiting comps' };
+  }
+  if (r.score == null) {
+    return { code: 'no_margin', label: 'No margin at this price' };
+  }
+  if (r.profit < gates.min_profit) {
+    return { code: 'low_profit', label: `Profit $${Math.round(r.profit)}` };
+  }
+  if (r.confidence < gates.min_confidence) {
+    return { code: 'low_confidence', label: `Confidence ${r.confidence.toFixed(2)}` };
+  }
+  if (r.roi < gates.min_roi) {
+    return { code: 'low_roi', label: `ROI ${Math.round(r.roi * 100)}%` };
+  }
+  return { code: 'ranking', label: 'In the ranking' };
+}
+
+async function handleCaptured(request, env) {
+  const u = new URL(request.url);
+  const limit = Math.min(Number(u.searchParams.get('limit')) || 200, 500);
+  const source = u.searchParams.get('source');
+
+  const where = [];
+  const binds = [];
+  if (source && source !== 'all') {
+    where.push('l.source = ?');
+    binds.push(source);
+  }
+
+  const { results } = await env.DB.prepare(
+    `SELECT l.id, l.source, l.title, l.price, l.url, l.thumb_url, l.category,
+            l.last_seen, l.status, l.distance_mi, l.geo_source, l.acquisition_mode,
+            c.band AS condition_band,
+            m.product_key, m.match_score,
+            cp.active_median, cp.retail_price, cp.n_active,
+            s.score, s.profit, s.roi, s.confidence, s.anchor_value, s.anchor_source,
+            s.est_net_blended, s.acquisition_cost,
+            EXISTS (SELECT 1 FROM acquisitions a WHERE a.listing_id = l.id) AS acquired
+     FROM listings l
+     LEFT JOIN conditions c ON c.listing_id = l.id
+     LEFT JOIN listing_matches m ON m.listing_id = l.id
+     LEFT JOIN comps cp ON cp.product_key = m.product_key
+     LEFT JOIN scores s ON s.listing_id = l.id
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY l.last_seen DESC
+     LIMIT ?`
+  )
+    .bind(...binds, limit)
+    .all();
+
+  const listings = results.map((r) => ({ ...r, reason: rankingReason(r, SCORING) }));
+
+  const summary = {};
+  for (const l of listings) summary[l.reason.code] = (summary[l.reason.code] ?? 0) + 1;
+
+  return json({ count: listings.length, summary, listings });
 }
 
 // Counts drive the checkbox list, and they respect the same gates as the
@@ -518,6 +621,7 @@ async function route(request, env) {
       if (u.pathname === '/auth/me') return json({ user: { id: user.sub, name: user.name, email: user.email } });
       if (u.pathname === '/listings') return await handleListings(request, env);
       if (u.pathname === '/categories') return await handleCategories(request, env);
+      if (u.pathname === '/captured') return await handleCaptured(request, env);
       if (u.pathname === '/inventory') return await handleInventory(request, env);
       if (u.pathname === '/calibration') return await handleCalibration(request, env);
       if (u.pathname === '/acquisitions' && request.method === 'POST') return await handleAcquire(request, env, user);

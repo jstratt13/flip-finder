@@ -14,6 +14,22 @@ export const money = (n) =>
 
 export const pct = (n) => (n == null ? '—' : `${Math.round(n * 100)}%`);
 
+const DAY = 24 * 60 * 60 * 1000;
+const STALE_DAYS = 7;
+
+// Capture is browse-triggered, so this says when the listing was last confirmed
+// present — not that it's still available. Stating it plainly beats implying a
+// certainty we don't have.
+function freshness(lastSeen) {
+  if (lastSeen == null) return null;
+  const days = (Date.now() - lastSeen) / DAY;
+
+  const text =
+    days < 1 ? 'Seen today' : days < 2 ? 'Seen yesterday' : `Seen ${Math.round(days)}d ago`;
+
+  return { text, stale: days >= STALE_DAYS };
+}
+
 // Confidence earns a word rather than a bare number: the figure only means
 // something relative to the gate, and a colour alone can't say which side.
 function confidenceLabel(c) {
@@ -25,6 +41,7 @@ function confidenceLabel(c) {
 
 function Card({ row, onOpen }) {
   const conf = confidenceLabel(row.confidence);
+  const seen = freshness(row.last_seen);
 
   return (
     <button type="button" className="card" onClick={() => onOpen(row)}>
@@ -68,6 +85,29 @@ function Card({ row, onOpen }) {
               {row.distance_mi.toFixed(1)} mi
             </span>
           ) : null}
+          {row.price_drop_pct > 0.05 && (
+            <span
+              className="pill drop"
+              title={`Was ${money(row.original_price)}${
+                row.days_listed ? `, listed ${Math.round(row.days_listed)} days` : ''
+              }`}
+            >
+              ↓ {Math.round(row.price_drop_pct * 100)}%
+              {row.days_listed ? ` in ${Math.round(row.days_listed)}d` : ''}
+            </span>
+          )}
+          {seen && (
+            <span
+              className={seen.stale ? 'pill mid' : 'pill quiet'}
+              title={
+                seen.stale
+                  ? "Not confirmed recently — may be gone, or you just haven't browsed it"
+                  : 'When this listing was last seen in a capture'
+              }
+            >
+              {seen.text}
+            </span>
+          )}
         </div>
       </div>
     </button>

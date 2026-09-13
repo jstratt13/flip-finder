@@ -49,6 +49,9 @@ export function listings(filters) {
   return request(`/listings?${p}`);
 }
 
+export const captured = (source) =>
+  request(`/captured${source && source !== 'all' ? `?source=${source}` : ''}`);
+
 export const categories = (source) =>
   request(`/categories${source && source !== 'all' ? `?source=${source}` : ''}`);
 

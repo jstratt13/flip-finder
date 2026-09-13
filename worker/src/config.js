@@ -110,6 +110,21 @@ export const CONFIDENCE = {
   unknown_condition: 0.2, // used when nothing in the text signals condition
 };
 
+// Capture is browse-triggered, so a listing going unseen means either it was
+// removed or you simply didn't browse that category. Those are indistinguishable
+// from here, which is why nothing is inferred from a short gap: the dashboard
+// reports how long ago a listing was last confirmed and lets you judge.
+//
+// Only a long silence is treated as gone. Craigslist posts expire around 30 days
+// anyway, so beyond that the listing is almost certainly dead regardless of
+// browsing habits.
+export const FRESHNESS = {
+  // Marked 'gone' and dropped from the ranking after this long unseen.
+  gone_after_days: 30,
+  // Still ranked, but flagged in the UI as possibly no longer available.
+  stale_after_days: 7,
+};
+
 export const SCORING = {
   alpha: 0.5, // ROI exponent — dampens tiny-ticket, high-ROI noise
   beta: 1.0, // confidence exponent
