@@ -242,7 +242,8 @@ async function handleListings(request, env) {
            (SELECT MIN(p.observed_at) FROM price_history p WHERE p.listing_id = l.id) AS first_priced_at,
            c.band AS condition_band, c.confidence AS condition_confidence,
            s.profit, s.roi, s.confidence, s.score, s.anchor_value, s.anchor_source,
-           s.est_net_blended, s.acquisition_cost
+           s.est_net_blended, s.acquisition_cost,
+           EXISTS (SELECT 1 FROM watchlist w WHERE w.listing_id = l.id) AS watched
     FROM listings l
     LEFT JOIN conditions c ON c.listing_id = l.id
     LEFT JOIN scores s ON s.listing_id = l.id
@@ -272,6 +273,58 @@ async function handleListings(request, env) {
   });
 
   return json({ count: listings.length, listings });
+}
+
+async function handleWatchlist(request, env, user) {
+  if (request.method === 'GET') {
+    const { results } = await env.DB.prepare(
+      `SELECT l.id, l.source, l.title, l.price, l.url, l.thumb_url, l.category,
+              l.last_seen, l.status, l.distance_mi, l.geo_source, l.acquisition_mode,
+              c.band AS condition_band,
+              s.score, s.profit, s.roi, s.confidence, s.anchor_value, s.anchor_source,
+              s.est_net_blended, s.acquisition_cost,
+              w.added_at, w.note, cw.name AS added_by,
+              EXISTS (SELECT 1 FROM acquisitions a WHERE a.listing_id = l.id) AS acquired
+       FROM watchlist w
+       JOIN listings l ON l.id = w.listing_id
+       LEFT JOIN conditions c ON c.listing_id = l.id
+       LEFT JOIN scores s ON s.listing_id = l.id
+       LEFT JOIN contributors cw ON cw.id = w.added_by
+       ORDER BY w.added_at DESC`
+    ).all();
+
+    return json({
+      count: results.length,
+      listings: results.map((r) => ({ ...r, watched: true })),
+    });
+  }
+
+  const body = await request.json().catch(() => null);
+  if (!body?.listing_id) return json({ error: 'listing_id required' }, 400);
+
+  if (body.remove) {
+    await env.DB.prepare('DELETE FROM watchlist WHERE listing_id = ?')
+      .bind(body.listing_id)
+      .run();
+    return json({ ok: true, watched: false });
+  }
+
+  const exists = await env.DB.prepare('SELECT 1 FROM listings WHERE id = ?')
+    .bind(body.listing_id)
+    .first();
+  if (!exists) return json({ error: 'no such listing' }, 404);
+
+  // Saving something already saved just updates the note rather than failing —
+  // both of you flagging the same item is agreement, not a conflict.
+  await env.DB.prepare(
+    `INSERT INTO watchlist (listing_id, added_by, added_at, note)
+     VALUES (?,?,?,?)
+     ON CONFLICT (listing_id) DO UPDATE SET note = COALESCE(excluded.note, watchlist.note)`
+  )
+    .bind(body.listing_id, user.sub, Date.now(), body.note ?? null)
+    .run();
+
+  return json({ ok: true, watched: true });
 }
 
 // Everything captured, with why each one isn't in the ranking.
@@ -315,6 +368,21 @@ async function handleCaptured(request, env) {
     binds.push(source);
   }
 
+  // Free-text search over what was captured. Every term must appear, in either
+  // the title or the description — this is for finding one listing you already
+  // know about, not for browsing, so narrowing beats recall.
+  const terms = (u.searchParams.get('q') ?? '')
+    .toLowerCase()
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  for (const term of terms) {
+    where.push("(LOWER(l.title) LIKE ? OR LOWER(COALESCE(l.description, '')) LIKE ?)");
+    binds.push(`%${term}%`, `%${term}%`);
+  }
+
   const { results } = await env.DB.prepare(
     `SELECT l.id, l.source, l.title, l.price, l.url, l.thumb_url, l.category,
             l.last_seen, l.status, l.distance_mi, l.geo_source, l.acquisition_mode,
@@ -323,7 +391,8 @@ async function handleCaptured(request, env) {
             cp.active_median, cp.retail_price, cp.n_active,
             s.score, s.profit, s.roi, s.confidence, s.anchor_value, s.anchor_source,
             s.est_net_blended, s.acquisition_cost,
-            EXISTS (SELECT 1 FROM acquisitions a WHERE a.listing_id = l.id) AS acquired
+            EXISTS (SELECT 1 FROM acquisitions a WHERE a.listing_id = l.id) AS acquired,
+            EXISTS (SELECT 1 FROM watchlist w WHERE w.listing_id = l.id) AS watched
      FROM listings l
      LEFT JOIN conditions c ON c.listing_id = l.id
      LEFT JOIN listing_matches m ON m.listing_id = l.id
@@ -622,6 +691,7 @@ async function route(request, env) {
       if (u.pathname === '/listings') return await handleListings(request, env);
       if (u.pathname === '/categories') return await handleCategories(request, env);
       if (u.pathname === '/captured') return await handleCaptured(request, env);
+      if (u.pathname === '/watchlist') return await handleWatchlist(request, env, user);
       if (u.pathname === '/inventory') return await handleInventory(request, env);
       if (u.pathname === '/calibration') return await handleCalibration(request, env);
       if (u.pathname === '/acquisitions' && request.method === 'POST') return await handleAcquire(request, env, user);

@@ -55,7 +55,16 @@ function Card({ row, onOpen }) {
       </div>
 
       <div className="body">
-        <h3>{row.title}</h3>
+        <h3>
+          {/* Ternary, not &&: SQLite EXISTS returns 0/1, which React renders
+              as a literal 0 instead of nothing. */}
+          {row.watched ? (
+            <span className="star" title="On your watchlist">
+              ★
+            </span>
+          ) : null}
+          {row.title}
+        </h3>
 
         <div className="figures">
           <div className="fig">

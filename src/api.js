@@ -49,8 +49,21 @@ export function listings(filters) {
   return request(`/listings?${p}`);
 }
 
-export const captured = (source) =>
-  request(`/captured${source && source !== 'all' ? `?source=${source}` : ''}`);
+export function captured({ source, q } = {}) {
+  const p = new URLSearchParams();
+  if (source && source !== 'all') p.set('source', source);
+  if (q) p.set('q', q);
+  const qs = p.toString();
+  return request(`/captured${qs ? `?${qs}` : ''}`);
+}
+
+export const watchlist = () => request('/watchlist');
+
+export const watch = (listing_id, note) =>
+  request('/watchlist', { method: 'POST', body: { listing_id, note } });
+
+export const unwatch = (listing_id) =>
+  request('/watchlist', { method: 'POST', body: { listing_id, remove: true } });
 
 export const categories = (source) =>
   request(`/categories${source && source !== 'all' ? `?source=${source}` : ''}`);

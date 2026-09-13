@@ -41,6 +41,26 @@ export default function Detail({ listing, onClose, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
+  // Optimistic locally so the star responds immediately; the list refreshes on
+  // close, which is when the change needs to be visible elsewhere.
+  const [watched, setWatched] = useState(Boolean(listing.watched));
+  const [watchBusy, setWatchBusy] = useState(false);
+
+  async function toggleWatch() {
+    const next = !watched;
+    setWatchBusy(true);
+    setError(null);
+    try {
+      if (next) await api.watch(listing.id);
+      else await api.unwatch(listing.id);
+      setWatched(next);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setWatchBusy(false);
+    }
+  }
+
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -170,11 +190,22 @@ export default function Detail({ listing, onClose, onChanged }) {
             </section>
           )}
 
-          {listing.url && (
-            <a className="external" href={listing.url} target="_blank" rel="noreferrer">
-              Open Original Listing
-            </a>
-          )}
+          <div className="detail-actions">
+            <button
+              type="button"
+              className={watched ? 'watch-btn on' : 'watch-btn'}
+              onClick={toggleWatch}
+              disabled={watchBusy}
+            >
+              {watched ? '★ On Watchlist' : '☆ Save to Watchlist'}
+            </button>
+
+            {listing.url && (
+              <a className="external" href={listing.url} target="_blank" rel="noreferrer">
+                Open Original Listing
+              </a>
+            )}
+          </div>
 
           {error && <p className="error">{error}</p>}
 

@@ -588,6 +588,49 @@ main { padding-bottom: 20px; }
 .calib .hint { margin-top: 10px; max-width: 58ch; }
 .calib code { font-size: 12px; background: var(--bg); padding: 1px 4px; border-radius: 3px; }
 
+/* ---------- watchlist ---------- */
+
+.star { color: var(--accent2); margin-right: 5px; }
+
+.searchbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px var(--pad) 0;
+}
+
+.searchbar input { flex: 1; }
+
+.detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.watch-btn {
+  padding: 8px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 100px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.watch-btn.on {
+  background: var(--accent2);
+  border-color: var(--accent2);
+  color: #fff;
+}
+
+.watch-btn:disabled { opacity: 0.55; }
+.detail-actions .external { margin-top: 0; }
+
 /* ---------- captured: a dense diagnostic list, not cards ---------- */
 
 .tally {
@@ -619,6 +662,27 @@ main { padding-bottom: 20px; }
 .rows { list-style: none; margin: 0; padding: 0; }
 
 .rows li + li { border-top: 1px solid var(--line); }
+
+/* Star and row are siblings, not nested — a button inside a button is invalid
+   markup, and the star needs its own hit area for quick triage. */
+.row-wrap { display: flex; align-items: stretch; }
+
+.row-star {
+  flex: none;
+  width: 40px;
+  border: none;
+  background: none;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--line-strong);
+  padding: 0;
+}
+
+.row-star:hover { color: var(--accent2); }
+.row-star.on { color: var(--accent2); }
+.row-star:focus-visible { outline: 2px solid var(--accent2); outline-offset: -2px; }
+
+.row-wrap .row-item { padding-left: 0; }
 
 .row-item {
   width: 100%;

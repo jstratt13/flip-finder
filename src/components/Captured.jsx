@@ -47,19 +47,49 @@ function ageText(lastSeen) {
   return `${Math.round(days)}d`;
 }
 
-export default function Captured({ data, loading, onOpen }) {
-  if (loading && !data) return <p className="status">Loading captured listings…</p>;
-  if (!data) return null;
+export default function Captured({ data, loading, onOpen, onToggleWatch, query, onQueryChange }) {
+  const search = (
+    <div className="searchbar">
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        placeholder="Search captured listings…"
+        aria-label="Search captured listings"
+      />
+      {query && (
+        <button type="button" className="link" onClick={() => onQueryChange('')}>
+          Clear
+        </button>
+      )}
+    </div>
+  );
+
+  if (loading && !data) {
+    return (
+      <>
+        {search}
+        <p className="status">Loading captured listings…</p>
+      </>
+    );
+  }
+  if (!data) return search;
 
   if (!data.count) {
     return (
-      <div className="empty">
-        <p className="empty-title">Nothing captured yet.</p>
-        <p>
-          Browse Craigslist or Facebook Marketplace with the extension running and listings will
-          appear here within a minute or so — whether or not they're worth buying.
-        </p>
-      </div>
+      <>
+        {search}
+        <div className="empty">
+          <p className="empty-title">
+            {query ? `Nothing matches "${query}".` : 'Nothing captured yet.'}
+          </p>
+          <p>
+            {query
+              ? 'Every word has to appear in the title or description. Try fewer words, or a distinctive one like a model number.'
+              : 'Browse Craigslist or Facebook Marketplace with the extension running and listings will appear here within a minute or so — whether or not they are worth buying.'}
+          </p>
+        </div>
+      </>
     );
   }
 
@@ -71,6 +101,8 @@ export default function Captured({ data, loading, onOpen }) {
 
   return (
     <>
+      {search}
+
       <ul className="tally">
         {counts.map((c) => (
           <li key={c.code} className={REASON_TONE[c.code] ?? ''}>
@@ -81,7 +113,20 @@ export default function Captured({ data, loading, onOpen }) {
 
       <ul className="rows">
         {data.listings.map((l) => (
-          <li key={l.id}>
+          // Two sibling buttons rather than one nested inside the other, which
+          // isn't valid markup — and saving while triaging shouldn't cost a
+          // round trip into the detail sheet and back.
+          <li key={l.id} className="row-wrap">
+            <button
+              type="button"
+              className={l.watched ? 'row-star on' : 'row-star'}
+              onClick={() => onToggleWatch(l)}
+              aria-pressed={Boolean(l.watched)}
+              title={l.watched ? 'Remove from watchlist' : 'Save to watchlist'}
+            >
+              {l.watched ? '★' : '☆'}
+            </button>
+
             <button type="button" className="row-item" onClick={() => onOpen(l)}>
               <span className="r-src">{SOURCE_LABEL[l.source] ?? l.source}</span>
               <span className="r-title">{l.title}</span>
@@ -97,7 +142,8 @@ export default function Captured({ data, loading, onOpen }) {
 
       <p className="hint" style={{ padding: '0 14px' }}>
         Most captured listings aren't deals — that's expected. This tab exists so an empty
-        Opportunities tab can be told apart from capture having quietly stopped working.
+        Opportunities tab can be told apart from capture having quietly stopped working. Star
+        anything worth a second look; saved listings ignore every threshold.
       </p>
     </>
   );

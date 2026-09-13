@@ -5,6 +5,7 @@ import Filters from './components/Filters.jsx';
 import Listings from './components/Listings.jsx';
 import Inventory from './components/Inventory.jsx';
 import Captured from './components/Captured.jsx';
+import Watchlist from './components/Watchlist.jsx';
 import Calibration from './components/Calibration.jsx';
 import Detail from './components/Detail.jsx';
 import PasswordChange from './components/PasswordChange.jsx';
@@ -30,6 +31,8 @@ export default function App() {
   const [owned, setOwned] = useState([]);
   const [calibration, setCalibration] = useState(null);
   const [captured, setCaptured] = useState(null);
+  const [saved, setSaved] = useState(null);
+  const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -58,8 +61,15 @@ export default function App() {
     setError(null);
 
     try {
+      if (view === 'watchlist') {
+        const data = await api.watchlist();
+        if (seq !== requestSeq.current) return;
+        setSaved(data);
+        return;
+      }
+
       if (view === 'captured') {
-        const data = await api.captured(filters.source);
+        const data = await api.captured({ source: filters.source, q: query });
         if (seq !== requestSeq.current) return;
         setCaptured(data);
         return;
@@ -100,11 +110,36 @@ export default function App() {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [user, filters, selected, view]);
+  }, [user, filters, selected, view, query]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Updated locally first so the star responds instantly while triaging a long
+  // list; only a failure costs a refetch.
+  async function toggleWatch(listing) {
+    const next = !listing.watched;
+
+    setCaptured((c) =>
+      c
+        ? { ...c, listings: c.listings.map((l) => (l.id === listing.id ? { ...l, watched: next } : l)) }
+        : c
+    );
+    setRows((rs) => rs.map((l) => (l.id === listing.id ? { ...l, watched: next } : l)));
+    if (!next) {
+      setSaved((s) =>
+        s ? { ...s, count: s.count - 1, listings: s.listings.filter((l) => l.id !== listing.id) } : s
+      );
+    }
+
+    try {
+      if (next) await api.watch(listing.id);
+      else await api.unwatch(listing.id);
+    } catch {
+      refresh();
+    }
+  }
 
   function signOut(notice = null) {
     api.clearToken();
@@ -153,6 +188,13 @@ export default function App() {
         </button>
         <button
           type="button"
+          className={view === 'watchlist' ? 'view on' : 'view'}
+          onClick={() => setView('watchlist')}
+        >
+          Watchlist
+        </button>
+        <button
+          type="button"
           className={view === 'inventory' ? 'view on' : 'view'}
           onClick={() => setView('inventory')}
         >
@@ -176,7 +218,22 @@ export default function App() {
           <Listings rows={rows} loading={loading} onOpen={setDetail} />
         )}
         {view === 'captured' && (
-          <Captured data={captured} loading={loading} onOpen={setDetail} />
+          <Captured
+            data={captured}
+            loading={loading}
+            onOpen={setDetail}
+            onToggleWatch={toggleWatch}
+            query={query}
+            onQueryChange={setQuery}
+          />
+        )}
+        {view === 'watchlist' && (
+          <Watchlist
+            data={saved}
+            loading={loading}
+            onOpen={setDetail}
+            onToggleWatch={toggleWatch}
+          />
         )}
         {view === 'inventory' && (
           <>
