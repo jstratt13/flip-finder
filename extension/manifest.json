@@ -17,7 +17,7 @@
     {
       "matches": [
         "https://*.craigslist.org/*",
-        "https://www.facebook.com/marketplace*"
+        "https://www.facebook.com/*"
       ],
       "js": ["src/adapters.js", "src/capture.js", "src/content.js"],
       "run_at": "document_idle"

@@ -167,6 +167,82 @@ test('craigslist: handles() only claims craigslist URLs', () => {
   assert.equal(CL.handles('https://www.facebook.com/marketplace'), false);
 });
 
+// A detail page reduced to what fromDetail reads: dialogs, the main region,
+// and each region's text, heading and images.
+function region(lines, { heading, imgs = [] } = {}) {
+  return {
+    innerText: lines.join('\n'),
+    querySelector: (sel) => (sel === 'h1' && heading ? { innerText: heading } : null),
+    querySelectorAll: (sel) => (sel === 'img' ? imgs.map((src) => ({ src })) : []),
+  };
+}
+
+function fbDoc({ main = null, dialogs = [] } = {}) {
+  return {
+    body: region([]),
+    querySelector: (sel) => (sel === '[role="main"]' ? main : null),
+    querySelectorAll: (sel) => (sel === '[role="dialog"]' ? dialogs : []),
+  };
+}
+
+const itemLoc = (id) => ({ pathname: `/marketplace/item/${id}/` });
+
+const ITEM_LINES = [
+  'Herman Miller Aeron chair size B',
+  '$450',
+  'Furniture',
+  'Listed 2 days ago in Irvine, CA',
+  'Condition',
+  'Used - good',
+  'Fully adjustable, lumbar pad included, one small scuff on the left arm rest from moving.',
+];
+
+test('facebook detail: reads a directly loaded item page', () => {
+  const doc = fbDoc({ main: region(ITEM_LINES, { heading: 'Herman Miller Aeron chair size B' }) });
+  const r = FB.fromDetail(doc, itemLoc('111'));
+  assert.equal(r.source_id, '111');
+  assert.equal(r.price, 450);
+  assert.equal(r.condition_raw, 'Used - good');
+  assert.equal(r.location_name, 'Irvine, CA');
+  assert.equal(r.capture_phase, 'detail');
+});
+
+test('facebook detail: an item opened over the grid is read from its dialog', () => {
+  // The grid behind still fills [role="main"]; reading it would take the
+  // cheapest card's price.
+  const grid = region(['$5', 'Mug', 'Irvine, CA', '$900', 'Couch', 'Tustin, CA', '$20', 'Lamp', 'Orange, CA']);
+  const chat = region(['Messenger', 'Hey is this available?']);
+  const item = region(ITEM_LINES, { heading: 'Herman Miller Aeron chair size B' });
+  const r = FB.fromDetail(fbDoc({ main: grid, dialogs: [chat, item] }), itemLoc('222'));
+  assert.equal(r.price, 450);
+  assert.equal(r.title, 'Herman Miller Aeron chair size B');
+});
+
+test('facebook detail: a grid read as a detail records nothing', () => {
+  // No dialog found, and main is the grid: several prices means wrong element.
+  const grid = region(['$5', 'Mug', 'Irvine, CA', '$900', 'Couch', 'Tustin, CA', '$20', 'Lamp', 'Orange, CA']);
+  assert.equal(FB.fromDetail(fbDoc({ main: grid }), itemLoc('333')), null);
+});
+
+test('facebook detail: related listings below the cut never set the price', () => {
+  const lines = [...ITEM_LINES, 'Related searches', '$1', 'Stool', '$3', 'Chair mat', '$8', 'Desk'];
+  const r = FB.fromDetail(fbDoc({ main: region(lines) }), itemLoc('444'));
+  assert.equal(r.price, 450);
+});
+
+test('facebook detail: a discounted item still reads, with the sale price', () => {
+  const lines = ['Aeron chair', '$400', '$450', 'Furniture', 'Irvine, CA'];
+  assert.equal(FB.fromDetail(fbDoc({ main: region(lines) }), itemLoc('555')).price, 400);
+});
+
+test('facebook: capture is scoped to Marketplace', () => {
+  assert.equal(FB.spa, true);
+  assert.equal(FB.inScope({ pathname: '/marketplace/irvine/search' }), true);
+  assert.equal(FB.inScope({ pathname: '/marketplace/item/1/' }), true);
+  assert.equal(FB.inScope({ pathname: '/' }), false);
+  assert.equal(FB.inScope({ pathname: '/groups/123' }), false);
+});
+
 // ------------------------------------------------------------------ shared
 
 test('every adapter satisfies the chassis contract', () => {

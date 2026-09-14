@@ -41,10 +41,90 @@ function ffFbPrice(lines) {
   return { price: Math.min(...prices), prices };
 }
 
+const FB_RELATED_RE = /^(related searches|more like this|you may also like|similar items|suggested)$/i;
+
+// Clicked from the feed, an item opens as a dialog layered over the grid; loaded
+// directly, it is the page's main region. Reading [role="main"] while a dialog
+// is open reads the grid behind it — every card's price, none of them this
+// item's. The item dialog is the one that carries a price; FB's other dialogs
+// (chat, notifications) don't.
+function ffFbDetailRoot(doc) {
+  const dialogs = [...doc.querySelectorAll('[role="dialog"]')].filter((d) =>
+    (d.innerText || '').split('\n').some((l) => FB_PRICE_LINE.test(l.trim()))
+  );
+  return dialogs.at(-1) ?? doc.querySelector('[role="main"]') ?? doc.body;
+}
+
+// Pure so the tests can drive it without a DOM.
+function ffParseFbDetail({ id, text, heading }) {
+  const all = (text || '').split('\n').map((s) => s.trim()).filter(Boolean);
+
+  // Everything below "Related searches" is OTHER people's listings, each with
+  // its own price. Reading past this point would happily record a $1 related
+  // item as this listing's price.
+  const cut = all.findIndex((l) => FB_RELATED_RE.test(l));
+  const lines = cut === -1 ? all : all.slice(0, cut);
+
+  // An item shows one price, or two when discounted. More than that means the
+  // region is a grid — the wrong element, or a dialog that hasn't rendered yet.
+  // Recording nothing beats recording some other card's price under this id.
+  const priceLines = lines.filter((l) => FB_PRICE_LINE.test(l) || FB_FREE_LINE.test(l));
+  if (priceLines.length > 2) return null;
+
+  const { price } = ffFbPrice(lines);
+  const title = heading?.trim() || lines[0] || null;
+  if (!title) return null;
+
+  // The Details block is label/value pairs on consecutive lines.
+  const valueAfter = (label) => {
+    const i = lines.findIndex((l) => l.toLowerCase() === label);
+    return i !== -1 && lines[i + 1] ? lines[i + 1] : null;
+  };
+
+  // "Listed 40 minutes ago in Claremont, CA"
+  const listed = lines.find((l) => /^listed\b.*\bin\s+/i.test(l));
+
+  // Description is free text, so it's the longest line that isn't a field
+  // value or the title.
+  const description = lines
+    .filter((l) => l !== title && l.length > 60 && !/·/.test(l))
+    .sort((a, b) => b.length - a.length)[0] ?? null;
+
+  return {
+    source: 'facebook',
+    source_id: id,
+    url: `https://www.facebook.com/marketplace/item/${id}/`,
+    title,
+    price,
+    // FB states the condition outright, which beats inferring it from prose.
+    condition_raw: valueAfter('condition'),
+    // ...and names the category, which beats our keyword guess.
+    category: lines[2] && !FB_PRICE_LINE.test(lines[2]) ? lines[2].toLowerCase() : null,
+    description,
+    location_name:
+      (listed && listed.replace(/^listed\b.*?\bin\s+/i, '').trim()) ||
+      [...lines].reverse().find((l) => FB_LOCATION_LINE.test(l)) ||
+      null,
+    // The item region travels with the record so a layout change is
+    // re-parsable server-side rather than silently losing listings.
+    raw_text: lines.join('\n').slice(0, 8000),
+    acquisition_mode: 'pickup',
+    capture_phase: 'detail',
+  };
+}
+
 globalThis.FF_ADAPTERS.facebook = {
   name: 'facebook',
 
   handles: (url) => /(^|\.)facebook\.com$/.test(new URL(url).hostname),
+
+  // FB changes the URL without reloading, so the chassis has to watch for
+  // navigation instead of deciding once at load.
+  spa: true,
+
+  // The script is injected across facebook.com so that clicking into
+  // Marketplace from anywhere is caught, but it reads nothing outside it.
+  inScope: (loc) => loc.pathname.startsWith('/marketplace'),
 
   isDetail: () => FB_ITEM_RE.test(location.pathname),
 
@@ -90,65 +170,23 @@ globalThis.FF_ADAPTERS.facebook = {
     };
   },
 
-  fromDetail() {
-    const id = location.pathname.match(FB_ITEM_RE)?.[1];
+  fromDetail(doc = document, loc = location) {
+    const id = loc.pathname.match(FB_ITEM_RE)?.[1];
     if (!id) return null;
 
-    const main = document.querySelector('[role="main"]') ?? document.body;
-    const text = main.innerText || '';
-    const all = text.split('\n').map((s) => s.trim()).filter(Boolean);
+    const root = ffFbDetailRoot(doc);
+    const record = ffParseFbDetail({
+      id,
+      text: root.innerText,
+      heading: root.querySelector('h1')?.innerText,
+    });
+    if (!record) return null;
 
-    // Everything below "Related searches" is OTHER people's listings, each with
-    // its own price. Reading past this point would happily record a $1 related
-    // item as this listing's price.
-    const cut = all.findIndex((l) =>
-      /^(related searches|more like this|you may also like|similar items|suggested)$/i.test(l)
-    );
-    const lines = cut === -1 ? all : all.slice(0, cut);
-
-    // The Details block is label/value pairs on consecutive lines.
-    const valueAfter = (label) => {
-      const i = lines.findIndex((l) => l.toLowerCase() === label);
-      return i !== -1 && lines[i + 1] ? lines[i + 1] : null;
-    };
-
-    const { price } = ffFbPrice(lines);
-    const title = document.querySelector('h1')?.innerText?.trim() || lines[0] || null;
-
-    // "Listed 40 minutes ago in Claremont, CA"
-    const listed = lines.find((l) => /^listed\b.*\bin\s+/i.test(l));
-
-    // Description is free text, so it's the longest line that isn't a field
-    // value or the title.
-    const description = lines
-      .filter((l) => l !== title && l.length > 60 && !/·/.test(l))
-      .sort((a, b) => b.length - a.length)[0] ?? null;
-
-    return {
-      source: 'facebook',
-      source_id: id,
-      url: `https://www.facebook.com/marketplace/item/${id}/`,
-      title,
-      price,
-      // FB states the condition outright, which beats inferring it from prose.
-      condition_raw: valueAfter('condition'),
-      // ...and names the category, which beats our keyword guess.
-      category: lines[2] && !FB_PRICE_LINE.test(lines[2]) ? lines[2].toLowerCase() : null,
-      description,
-      location_name:
-        (listed && listed.replace(/^listed\b.*?\bin\s+/i, '').trim()) ||
-        [...lines].reverse().find((l) => FB_LOCATION_LINE.test(l)) ||
-        null,
-      // The item region travels with the record so a layout change is
-      // re-parsable server-side rather than silently losing listings.
-      raw_text: lines.join('\n').slice(0, 8000),
-      images: [...main.querySelectorAll('img')]
-        .map((i) => i.src)
-        .filter((s) => s && s.includes('fbcdn'))
-        .slice(0, 12),
-      acquisition_mode: 'pickup',
-      capture_phase: 'detail',
-    };
+    record.images = [...root.querySelectorAll('img')]
+      .map((i) => i.src)
+      .filter((s) => s && s.includes('fbcdn'))
+      .slice(0, 12);
+    return record;
   },
 };
 
