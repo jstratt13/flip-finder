@@ -59,7 +59,22 @@ const FROM = `
   LEFT JOIN comps cp ON cp.product_key = m.product_key
   LEFT JOIN scores s ON s.listing_id = l.id`;
 
-export async function capturedListings(db, { source, q, reason, limit = 200, gates }) {
+// One page of the Captured tab.
+//
+// Pages continue from a cursor — the last row's (last_seen, id) — rather than
+// an OFFSET. D1 bills every row a query reads, and an offset reads past every
+// earlier page first: in production a 50-row page 150 rows deep read 792 rows
+// against 192 for the first. With a cursor each page costs about the same.
+//
+// Tallies scan every listing matching the source and search (1,898 rows read
+// at 382 listings) and don't change as you page, so they're counted only when
+// asked for — the dashboard asks on the first page and reuses them after.
+export const PAGE_SIZE = 50;
+
+export async function capturedListings(
+  db,
+  { source, q, reason, limit = PAGE_SIZE, cursor = null, tallies = true, gates }
+) {
   const where = [];
   const binds = [];
   if (source && source !== 'all') {
@@ -84,13 +99,23 @@ export async function capturedListings(db, { source, q, reason, limit = 200, gat
   const gateBinds = [gates.min_profit, gates.min_confidence, gates.min_roi];
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-  // Tallies cover every listing matching source and search, not the chosen
-  // reason — so the other reasons stay visible to switch to.
-  const summaryStmt = db
-    .prepare(`SELECT ${REASON_SQL} AS code, COUNT(*) AS n ${FROM} ${whereSql} GROUP BY code`)
-    .bind(...gateBinds, ...binds);
-
   const filtered = REASON_CODES.includes(reason);
+  const page = parseCursor(cursor);
+
+  const outer = [];
+  const outerBinds = [];
+  if (filtered) {
+    outer.push('reason_code = ?');
+    outerBinds.push(reason);
+  }
+  if (page) {
+    // Ties on last_seen are real: a whole grid batch shares one timestamp.
+    // Written as a row value so SQLite seeks idx_listings_seen_id to the
+    // cursor; the equivalent OR form scanned from the top of the index.
+    outer.push('(last_seen, id) < (?, ?)');
+    outerBinds.push(page.lastSeen, page.id);
+  }
+
   const pageStmt = db
     .prepare(
       `SELECT * FROM (
@@ -107,26 +132,49 @@ export async function capturedListings(db, { source, q, reason, limit = 200, gat
          ${FROM}
          ${whereSql}
        )
-       ${filtered ? 'WHERE reason_code = ?' : ''}
-       ORDER BY last_seen DESC
+       ${outer.length ? `WHERE ${outer.join(' AND ')}` : ''}
+       ORDER BY last_seen DESC, id DESC
        LIMIT ?`
     )
-    .bind(...gateBinds, ...binds, ...(filtered ? [reason] : []), limit);
+    // One extra row says whether another page exists, without a count query.
+    .bind(...gateBinds, ...binds, ...outerBinds, limit + 1);
 
-  const [{ results: counts }, { results: rows }] = await db.batch([summaryStmt, pageStmt]);
+  // Tallies cover every listing matching source and search, not the chosen
+  // reason — so the other reasons stay visible to switch to.
+  const summaryStmt = tallies
+    ? db
+        .prepare(`SELECT ${REASON_SQL} AS code, COUNT(*) AS n ${FROM} ${whereSql} GROUP BY code`)
+        .bind(...gateBinds, ...binds)
+    : null;
 
-  const summary = Object.fromEntries(counts.map((r) => [r.code, r.n]));
-  const total = counts.reduce((sum, r) => sum + r.n, 0);
-  const listings = rows.map(({ reason_code, ...r }) => ({ ...r, reason: rankingReason(r, gates) }));
+  const results = await db.batch(summaryStmt ? [pageStmt, summaryStmt] : [pageStmt]);
+  const rows = results[0].results;
+  const more = rows.length > limit;
+  const listings = rows
+    .slice(0, limit)
+    .map(({ reason_code, ...r }) => ({ ...r, reason: rankingReason(r, gates) }));
+  const last = listings.at(-1);
 
-  return {
+  const out = {
     count: listings.length,
-    // How many match the current view in all — more than count when the page
-    // is capped, which the dashboard says out loud.
-    matching: filtered ? summary[reason] ?? 0 : total,
-    total,
     reason: filtered ? reason : null,
-    summary,
     listings,
+    next_cursor: more && last ? `${last.last_seen}:${last.id}` : null,
   };
+
+  if (summaryStmt) {
+    const counts = results[1].results;
+    out.summary = Object.fromEntries(counts.map((r) => [r.code, r.n]));
+    out.total = counts.reduce((sum, r) => sum + r.n, 0);
+    // How many match the current view in all, for "51–100 of 370".
+    out.matching = filtered ? out.summary[reason] ?? 0 : out.total;
+  }
+  return out;
+}
+
+// "<last_seen>:<id>". Ids contain colons themselves ("facebook:123"), so only
+// the first one separates. Anything malformed means the first page.
+function parseCursor(cursor) {
+  const m = /^(\d+):(.+)$/.exec(String(cursor ?? ''));
+  return m ? { lastSeen: Number(m[1]), id: m[2] } : null;
 }

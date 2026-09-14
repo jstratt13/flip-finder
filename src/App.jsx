@@ -36,6 +36,14 @@ export default function App() {
   // The Captured tab's reason filter. Held here, not in the tab, so it survives
   // switching tabs and applies server-side to everything captured.
   const [reason, setReason] = useState(null);
+  // Captured pages: the cursor that starts each page reached so far, for the
+  // view (source, search, reason) they belong to. Any other view starts over
+  // at page one — derived in refresh rather than reset by an effect, which
+  // would fetch twice.
+  const [paging, setPaging] = useState({ key: '', cursors: [null], index: 0 });
+  const capturedKey = `${filters.source}|${query}|${reason ?? ''}`;
+  // Which view the tallies on screen were counted for.
+  const talliesKey = useRef(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -72,9 +80,25 @@ export default function App() {
       }
 
       if (view === 'captured') {
-        const data = await api.captured({ source: filters.source, q: query, reason });
+        const page = paging.key === capturedKey ? paging : { cursors: [null], index: 0 };
+        // Tallies scan every listing and don't change between pages, so they're
+        // fetched on page one and carried forward.
+        const tallies = page.index === 0 || talliesKey.current !== capturedKey;
+        const data = await api.captured({
+          source: filters.source,
+          q: query,
+          reason,
+          cursor: page.cursors[page.index],
+          tallies,
+        });
         if (seq !== requestSeq.current) return;
-        setCaptured(data);
+        if (tallies) talliesKey.current = capturedKey;
+        setCaptured((prev) => ({
+          ...(tallies ? {} : { summary: prev?.summary, total: prev?.total, matching: prev?.matching }),
+          ...data,
+          key: capturedKey,
+          page: page.index,
+        }));
         return;
       }
 
@@ -113,11 +137,27 @@ export default function App() {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [user, filters, selected, view, query, reason]);
+  }, [user, filters, selected, view, query, reason, paging, capturedKey]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  function turnPage(step) {
+    setPaging((p) => {
+      const base = p.key === capturedKey ? p : { key: capturedKey, cursors: [null], index: 0 };
+      if (step > 0) {
+        if (!captured?.next_cursor) return base;
+        return {
+          key: capturedKey,
+          cursors: [...base.cursors.slice(0, base.index + 1), captured.next_cursor],
+          index: base.index + 1,
+        };
+      }
+      return { ...base, index: Math.max(0, base.index - 1) };
+    });
+    window.scrollTo({ top: 0 });
+  }
 
   // Updated locally first so the star responds instantly while triaging a long
   // list; only a failure costs a refetch.
@@ -230,6 +270,8 @@ export default function App() {
             onQueryChange={setQuery}
             reason={reason}
             onReasonChange={setReason}
+            onNextPage={() => turnPage(1)}
+            onPrevPage={() => turnPage(-1)}
           />
         )}
         {view === 'watchlist' && (

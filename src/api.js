@@ -49,11 +49,13 @@ export function listings(filters) {
   return request(`/listings?${p}`);
 }
 
-export function captured({ source, q, reason } = {}) {
+export function captured({ source, q, reason, cursor, tallies = true } = {}) {
   const p = new URLSearchParams();
   if (source && source !== 'all') p.set('source', source);
   if (q) p.set('q', q);
   if (reason) p.set('reason', reason);
+  if (cursor) p.set('cursor', cursor);
+  if (!tallies) p.set('tallies', '0');
   const qs = p.toString();
   return request(`/captured${qs ? `?${qs}` : ''}`);
 }

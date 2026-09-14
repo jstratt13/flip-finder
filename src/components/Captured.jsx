@@ -1,5 +1,8 @@
 import { money } from './Listings.jsx';
 
+// Matches the worker's page size (worker/src/captured.js).
+const PAGE_SIZE = 50;
+
 const SOURCE_LABEL = { craigslist: 'CL', facebook: 'FB', ebay: 'eBay' };
 
 // Grouped by what you'd actually do about it, not by severity.
@@ -56,6 +59,8 @@ export default function Captured({
   onQueryChange,
   reason,
   onReasonChange,
+  onNextPage,
+  onPrevPage,
 }) {
   const search = (
     <div className="searchbar">
@@ -105,6 +110,14 @@ export default function Captured({
     );
   }
 
+  // "51–100 of 370". Only worth saying when the view runs past one page.
+  const first = (data.page ?? 0) * PAGE_SIZE + 1;
+  const paged = (data.page ?? 0) > 0 || Boolean(data.next_cursor);
+  const range =
+    paged && data.count
+      ? `${first}–${first + data.count - 1}${data.matching != null ? ` of ${data.matching}` : ''}`
+      : null;
+
   // The active reason stays listed even at zero, so it can always be cleared.
   const counts = REASON_ORDER.filter((c) => data.summary[c] || c === reason).map((c) => ({
     code: c,
@@ -142,9 +155,9 @@ export default function Captured({
         )}
       </ul>
 
-      {data.matching > data.count && (
+      {range && (
         <p className="hint tally-cap">
-          Showing the {data.count} most recently seen of {data.matching}.
+          Showing {range}, most recently seen first.
         </p>
       )}
 
@@ -183,6 +196,18 @@ export default function Captured({
           </li>
         ))}
       </ul>
+
+      {paged && (
+        <nav className="pager" aria-label="Captured pages">
+          <button type="button" onClick={onPrevPage} disabled={!data.page || loading}>
+            ‹ Previous {PAGE_SIZE}
+          </button>
+          <span className="pager-range">{range}</span>
+          <button type="button" onClick={onNextPage} disabled={!data.next_cursor || loading}>
+            Next {PAGE_SIZE} ›
+          </button>
+        </nav>
+      )}
 
       <p className="hint" style={{ padding: '0 14px' }}>
         Most captured listings aren't deals — that's expected. This tab exists so an empty

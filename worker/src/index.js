@@ -1,5 +1,5 @@
 import { ingestBatch } from './ingest.js';
-import { capturedListings } from './captured.js';
+import { capturedListings, PAGE_SIZE } from './captured.js';
 import { resolvePending } from './resolve.js';
 import { HOME, SCORING } from './config.js';
 import { CATEGORIES } from './categorize.js';
@@ -334,7 +334,9 @@ async function handleCaptured(request, env) {
     source: u.searchParams.get('source'),
     q: u.searchParams.get('q'),
     reason: u.searchParams.get('reason'),
-    limit: Math.min(Number(u.searchParams.get('limit')) || 200, 500),
+    limit: Math.min(Number(u.searchParams.get('limit')) || PAGE_SIZE, 200),
+    cursor: u.searchParams.get('cursor'),
+    tallies: u.searchParams.get('tallies') !== '0',
     gates: SCORING,
   });
   return json(result);

@@ -29,9 +29,9 @@ function d1() {
 }
 
 let seq = 0;
-function seed(db, reason, { source = 'craigslist', title = `Item ${seq}` } = {}) {
+function seed(db, reason, { source = 'craigslist', title = `Item ${seq}`, seenAt } = {}) {
   const id = `${source}:${++seq}`;
-  const at = 1_000_000 + seq; // later seeds are "seen" more recently
+  const at = seenAt ?? 1_000_000 + seq; // later seeds are "seen" more recently
   const run = (sql, ...a) => db.raw.prepare(sql).run(...a);
 
   run(
@@ -138,4 +138,75 @@ test('the gates bound into the SQL are the ones passed in', async () => {
   const r = await capturedListings(db, { reason: 'low_profit', gates: { ...SCORING, min_profit: 100 } });
   assert.equal(r.count, 1);
   assert.equal(r.listings[0].reason.code, 'low_profit');
+});
+
+async function allPages(db, opts) {
+  const pages = [];
+  let cursor = null;
+  do {
+    const r = await capturedListings(db, { ...opts, cursor, tallies: !cursor, gates: SCORING });
+    pages.push(r);
+    cursor = r.next_cursor;
+  } while (cursor && pages.length < 50);
+  return pages;
+}
+
+test('pages of 50 cover everything once, newest first', async () => {
+  const db = d1();
+  for (let i = 0; i < 120; i++) seed(db, i % 3 ? 'no_comps' : 'ranking');
+
+  const pages = await allPages(db, {});
+  assert.deepEqual(pages.map((p) => p.count), [50, 50, 20]);
+  const ids = pages.flatMap((p) => p.listings.map((l) => l.id));
+  assert.equal(new Set(ids).size, 120, 'no listing repeated or skipped');
+  const seen = pages.flatMap((p) => p.listings.map((l) => l.last_seen));
+  assert.deepEqual(seen, [...seen].sort((x, y) => y - x));
+  assert.equal(pages.at(-1).next_cursor, null);
+});
+
+test('listings sharing one timestamp still page without gaps', async () => {
+  // A whole grid batch is ingested with the same last_seen.
+  const db = d1();
+  for (let i = 0; i < 75; i++) seed(db, 'no_comps', { seenAt: 5_000_000 });
+
+  const pages = await allPages(db, {});
+  const ids = pages.flatMap((p) => p.listings.map((l) => l.id));
+  assert.equal(ids.length, 75);
+  assert.equal(new Set(ids).size, 75);
+});
+
+test('paging within a reason filter stays within that reason', async () => {
+  const db = d1();
+  for (let i = 0; i < 130; i++) seed(db, i % 2 ? 'no_match' : 'no_comps');
+
+  const pages = await allPages(db, { reason: 'no_match' });
+  assert.deepEqual(pages.map((p) => p.count), [50, 15]);
+  assert.ok(pages.every((p) => p.listings.every((l) => l.reason.code === 'no_match')));
+  assert.equal(pages[0].matching, 65);
+});
+
+test('later pages skip the tallies query entirely', async () => {
+  const db = d1();
+  for (let i = 0; i < 60; i++) seed(db, 'no_comps');
+  let statements = 0;
+  const batch = db.batch;
+  db.batch = async (stmts) => ((statements += stmts.length), batch(stmts));
+
+  const first = await capturedListings(db, { gates: SCORING });
+  assert.equal(statements, 2);
+  assert.equal(first.total, 60);
+
+  const second = await capturedListings(db, { cursor: first.next_cursor, tallies: false, gates: SCORING });
+  assert.equal(statements, 3, 'second page ran one statement');
+  assert.equal(second.summary, undefined);
+  assert.equal(second.count, 10);
+});
+
+test('a malformed cursor falls back to the first page', async () => {
+  const db = d1();
+  for (let i = 0; i < 3; i++) seed(db, 'no_comps');
+  for (const cursor of ['garbage', '12:', ':id', "1' OR 1=1 --"]) {
+    const r = await capturedListings(db, { cursor, gates: SCORING });
+    assert.equal(r.count, 3, cursor);
+  }
 });

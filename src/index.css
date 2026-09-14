@@ -913,3 +913,39 @@ main { padding-bottom: 20px; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* Captured paging. Full-width buttons on a phone, where the list is long and
+   the thumb is at the bottom. */
+.pager {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 14px var(--pad);
+  border-top: 1px solid var(--line);
+}
+
+.pager button {
+  font: inherit;
+  font-size: 13px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.pager button:first-child { justify-self: start; }
+.pager button:last-child { justify-self: end; }
+.pager button:disabled { color: var(--muted); border-color: var(--line); cursor: default; opacity: 0.6; }
+.pager button:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
+
+.pager-range {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
