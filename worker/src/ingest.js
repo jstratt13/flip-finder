@@ -4,6 +4,11 @@ import { categorize } from './categorize.js';
 import { coordsForCity } from './cities.js';
 import { allIn } from './d1.js';
 
+// An unchanged re-capture still refreshes last_seen, but no more than this
+// often. Staleness is judged in days (7 to flag, 30 to sweep), so an hour of
+// lag in "last confirmed" costs nothing and saves a write per scroll.
+const LAST_SEEN_REFRESH_MS = 60 * 60 * 1000;
+
 const SOURCES = new Set(['facebook', 'craigslist', 'ebay']);
 
 function num(v) {
@@ -82,11 +87,23 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
 
   if (!accepted.length) return { received: items.length, accepted: 0, rejected, results: [] };
 
-  // Read current prices first so we can record genuine changes rather than
-  // rewriting every row on every re-capture.
+  // Read what's already stored so we can record genuine changes rather than
+  // rewriting every row on every re-capture, and judge condition from
+  // everything known about a listing, not just what this capture carried.
   const ids = accepted.map((n) => n.id);
-  const existing = await allIn(db, (ph) => `SELECT id, price FROM listings WHERE id IN (${ph})`, ids);
+  const existing = await allIn(
+    db,
+    (ph) => `SELECT id, price, title, description, condition_raw FROM listings WHERE id IN (${ph})`,
+    ids
+  );
   const priorPrice = new Map(existing.map((r) => [r.id, r.price]));
+
+  // Condition inputs merged the way the listing upsert merges them: a capture's
+  // value wins, a missing one keeps what's stored. A grid card carries no
+  // description, and assessing it alone used to overwrite a detail page's
+  // "like new" with "unknown" — confidence 0.2, enough to drop a listing below
+  // the ranking gate.
+  const known = new Map(existing.map((r) => [r.id, r]));
 
   // One listing can arrive twice in a batch (grid card plus detail page), so
   // collapse to the last known price per id before deciding what changed.
@@ -156,7 +173,29 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
              score_due_at = CASE WHEN listings.status = 'gone' THEN excluded.score_due_at
                                  ELSE listings.score_due_at END,
              score_attempts = CASE WHEN listings.status = 'gone' THEN 0 ELSE listings.score_attempts END,
-             status = 'active'`
+             status = 'active'
+           -- Browsing past a listing you already have rewrote its row every
+           -- time, and D1 counts an identical rewrite as written rows plus one
+           -- per index touched. Now it writes only when something would change,
+           -- or to refresh last_seen at most hourly: freshness is judged in days.
+           WHERE listings.status = 'gone'
+              OR excluded.last_seen - listings.last_seen >= ${LAST_SEEN_REFRESH_MS}
+              OR (excluded.price IS NOT NULL AND excluded.price IS NOT listings.price)
+              OR (excluded.description IS NOT NULL AND excluded.description IS NOT listings.description)
+              OR (excluded.raw_text IS NOT NULL AND excluded.raw_text IS NOT listings.raw_text)
+              OR (excluded.thumb_url IS NOT NULL AND excluded.thumb_url IS NOT listings.thumb_url)
+              OR (excluded.images IS NOT NULL AND excluded.images IS NOT listings.images)
+              OR (excluded.url IS NOT NULL AND excluded.url IS NOT listings.url)
+              OR (excluded.condition_raw IS NOT NULL AND excluded.condition_raw IS NOT listings.condition_raw)
+              OR (excluded.posted_at IS NOT NULL AND excluded.posted_at IS NOT listings.posted_at)
+              OR (excluded.category IS NOT NULL AND excluded.category IS NOT listings.category)
+              OR (excluded.location_name IS NOT NULL AND excluded.location_name IS NOT listings.location_name)
+              OR ((excluded.geo_source = 'exact' OR listings.geo_source IS NOT 'exact')
+                  AND ((excluded.lat IS NOT NULL AND excluded.lat IS NOT listings.lat)
+                    OR (excluded.lon IS NOT NULL AND excluded.lon IS NOT listings.lon)
+                    OR (excluded.distance_mi IS NOT NULL AND excluded.distance_mi IS NOT listings.distance_mi)
+                    OR (excluded.geo_source IS NOT NULL AND excluded.geo_source IS NOT listings.geo_source)))
+              OR (listings.captured_by IS NULL AND excluded.captured_by IS NOT NULL)`
         )
         .bind(
           n.id, n.source, n.source_id, n.url, n.title, n.description, n.raw_text,
@@ -166,16 +205,30 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
         )
     );
 
-    const c = assessCondition(n);
+    const prior = known.get(n.id);
+    const merged = {
+      title: prior?.title ?? n.title,
+      description: n.description ?? prior?.description ?? null,
+      condition_raw: n.condition_raw ?? prior?.condition_raw ?? null,
+    };
+    known.set(n.id, merged);
+
+    const c = assessCondition(merged);
     stmts.push(
       db
         .prepare(
+          // Unchanged assessments are skipped: D1 bills an identical rewrite the
+          // same as a real one, row and index alike.
           `INSERT INTO conditions (listing_id, band, multiplier, confidence, signals, assessed_at)
            VALUES (?,?,?,?,?,?)
            ON CONFLICT (listing_id) DO UPDATE SET
              band = excluded.band, multiplier = excluded.multiplier,
              confidence = excluded.confidence, signals = excluded.signals,
-             assessed_at = excluded.assessed_at`
+             assessed_at = excluded.assessed_at
+           WHERE conditions.band IS NOT excluded.band
+              OR conditions.multiplier IS NOT excluded.multiplier
+              OR conditions.confidence IS NOT excluded.confidence
+              OR conditions.signals IS NOT excluded.signals`
         )
         .bind(n.id, c.band, c.multiplier, c.confidence, JSON.stringify(c.signals), now)
     );
