@@ -6,7 +6,7 @@ import { createMeter, metered, SUBREQUEST_LIMIT } from '../src/budget.js';
 // A fake Cloudflare that enforces the free plan independently of our meter:
 // every D1 call, KV call and fetch counts, and the 51st throws — as production
 // would. If the budget logic undercounts anything, these tests blow up here.
-function freePlan({ pending = [], scoresOut = [] } = {}) {
+function freePlan({ pending = [], scoresOut = [], ebayFetchedToday = 0 } = {}) {
   let used = 0;
   const spend = () => {
     used += 1;
@@ -17,7 +17,12 @@ function freePlan({ pending = [], scoresOut = [] } = {}) {
     sql,
     args,
     bind: (...a) => stmt(sql, a),
-    all: async () => (spend(), { results: /score_due_at <= ?/.test(sql) ? pending : [] }),
+    all: async () => {
+      spend();
+      if (/score_due_at <= \?/.test(sql)) return { results: pending };
+      if (/FROM comps WHERE source = 'ebay'/.test(sql)) return { results: [{ n: ebayFetchedToday }] };
+      return { results: [] };
+    },
     first: async () => (spend(), null),
     run: async () => (spend(), { meta: { changes: 0 } }),
   });
@@ -154,6 +159,30 @@ test('a backlog of cold local pools drains too', async () => {
   // separately deferred every fallback forever.
   const runs = await drain(listings(60, BULKY));
   assert.ok(runs <= 20, `${runs} runs`);
+});
+
+test('lookups stop at the daily eBay allowance', async () => {
+  // 2,245 products fetched in the last 24 hours is 4,490 calls of 4,500.
+  const plat = freePlan({ pending: listings(50), ebayFetchedToday: 2245 });
+  const r = await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
+  assert.equal(r.comp_fetches, 5);
+});
+
+test('with the eBay allowance used up, listings wait rather than back off', async () => {
+  const plat = freePlan({ pending: listings(50), ebayFetchedToday: 2250 });
+  const r = await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
+  assert.equal(r.comp_fetches, 0);
+  // No comps were in hand, so no listing's attempt count may advance.
+  const batches = [];
+  const plat2 = freePlan({ pending: listings(50), ebayFetchedToday: 2250 });
+  const batch = plat2.env.DB.batch;
+  plat2.env.DB.batch = async (stmts) => (batches.push(...stmts), batch(stmts));
+  await resolvePending(plat2.env, { fetchImpl: plat2.fetchImpl });
+  const attempts = batches
+    .filter((s) => /UPDATE listings SET score_due_at/.test(s.sql))
+    .map((s) => s.args[1]);
+  assert.ok(attempts.length > 0);
+  assert.ok(attempts.every((a) => a === 0), `attempts advanced: ${attempts}`);
 });
 
 test('without eBay credentials no lookups are attempted at all', async () => {

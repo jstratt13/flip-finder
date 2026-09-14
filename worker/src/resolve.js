@@ -6,9 +6,12 @@ import { FRESHNESS } from './config.js';
 import { allIn, chunk, placeholders } from './d1.js';
 import { createMeter, metered } from './budget.js';
 
-// eBay Browse allows roughly 5k calls/day and each product costs two, so cap
-// how many fresh lookups one run can trigger. On the free Workers plan the
-// subrequest budget (budget.js) binds long before this does.
+// eBay Browse allows 5,000 calls a day and each product costs two. At one run
+// every 5 minutes and 16 products a run, that would be ~9,200 calls — so each
+// run counts the last 24 hours of lookups and stops at 4,500, leaving margin
+// for failed calls, which leave no comp row behind to be counted.
+const EBAY_DAILY_CALLS = 4500;
+const EBAY_CALLS_PER_PRODUCT = 2;
 const MAX_COMP_FETCHES = 40;
 
 // Subrequests each pricing step costs, used to stop before the budget runs out.
@@ -20,9 +23,11 @@ const COST_EBAY = 2;
 const COST_EBAY_TOKEN = 3;
 
 // Listings matched and scored per run. The free plan gives a cron run 10 ms of
-// CPU; 200 listings measured ~6 ms locally, which is too close to trust on
-// slower hardware. Pricing throughput is set by the subrequest budget anyway.
-const DEFAULT_LIMIT = 100;
+// CPU and production runs measured 17–31 ms, most of it a fixed cold-start
+// cost; each listing adds ~0.05 ms, so 50 instead of 100 saves ~2 ms. Pricing
+// is capped at 16 products a run by the subrequest budget, which 50 listings
+// comfortably feeds.
+const DEFAULT_LIMIT = 50;
 
 const HOUR = 60 * 60 * 1000;
 
@@ -253,6 +258,17 @@ export async function resolvePending(
   // take the normal "awaiting comps" path instead.
   const ebayConfigured = Boolean(rawEnv.EBAY_CLIENT_ID && rawEnv.EBAY_CLIENT_SECRET);
 
+  // Only asked when this run could actually spend eBay calls.
+  let ebayProductsLeft = 0;
+  if (ebayConfigured && staleKeys.length) {
+    const { results } = await db
+      .prepare("SELECT COUNT(*) AS n FROM comps WHERE source = 'ebay' AND fetched_at > ?")
+      .bind(now - 24 * HOUR)
+      .all();
+    const used = (results[0]?.n ?? 0) * EBAY_CALLS_PER_PRODUCT;
+    ebayProductsLeft = Math.max(0, Math.floor((EBAY_DAILY_CALLS - used) / EBAY_CALLS_PER_PRODUCT));
+  }
+
   let localComps = 0;
   let fetches = 0;
   let ebayDown = false;
@@ -281,7 +297,7 @@ export async function resolvePending(
   // of cold local pools spend the budget on queries that found nothing, defer
   // every fallback, and repeat identically every run — never making progress.
   for (const key of staleKeys) {
-    const canEbay = ebayConfigured && !ebayDown && fetches < MAX_COMP_FETCHES;
+    const canEbay = ebayConfigured && !ebayDown && fetches < Math.min(MAX_COMP_FETCHES, ebayProductsLeft);
     // Until this run holds a token, a lookup may also have to fetch one.
     const ebayCost = COST_EBAY + (token ? 0 : COST_EBAY_TOKEN);
     const worst = isLocalKey(key) ? COST_LOCAL + (canEbay ? ebayCost : 0) : canEbay ? ebayCost : 0;

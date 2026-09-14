@@ -25,4 +25,4 @@ id = "ad9b53ad0e1645a9aff331289242fd07"
 # Resolves matching, comps and scoring for newly captured listings. The run is
 # capped at 40 fresh eBay lookups, well inside the daily quota at this cadence.
 [triggers]
-crons = ["*/15 * * * *"]
+crons = ["*/5 * * * *"]
