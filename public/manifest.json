@@ -6,8 +6,8 @@
   "scope": "/flip-finder/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f4f3ef",
-  "theme_color": "#f4f3ef",
+  "background_color": "#0d0d0d",
+  "theme_color": "#0d0d0d",
   "icons": [
     {
       "src": "/flip-finder/icon.svg",
