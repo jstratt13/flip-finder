@@ -27,14 +27,77 @@ export const BULKY_TERMS = [
   'surfboard', 'paddleboard', 'rug', 'mirror', 'playset', 'trampoline', 'shed',
 ];
 
-const BULKY_RE = new RegExp(`\\b(${BULKY_TERMS.join('|')})s?\\b`, 'i');
+const BULKY_RE = new RegExp(`\\b(${BULKY_TERMS.join('|')})s?\\b`, 'gi');
 
 // Large TVs are technically shippable and practically never are.
 const BULKY_TV_RE = /\b(6[0-9]|7[0-9]|8[0-9])\s*("|inch|in)\b.*\btv\b|\btv\b.*\b(6[0-9]|7[0-9]|8[0-9])\s*("|inch|in)\b/i;
 
-export function isBulky(title = '', category = '') {
+// A bulky word names what an accessory fits, not what it is: "Weber grill
+// cover" is a $20 cover, but matched as a grill it is priced against local
+// grill asks and ranks as a huge phantom profit — while dragging down the comp
+// pool for real grills. Any of these words disqualifies the whole title.
+//
+// This errs deliberately. "Sectional with cushions" also drops out, and a
+// non-bulky match on a sofa scores too low to rank. Losing a real sofa from
+// the ranking costs one missed look; ranking a cover as a grill costs a drive.
+export const BULKY_ACCESSORY_TERMS = [
+  'cover', 'slipcover', 'cushion', 'pillow', 'topper', 'protector', 'sheet',
+  'blade', 'battery', 'batteries', 'charger', 'filter', 'hose', 'bag', 'brush',
+  'grate', 'knob', 'handle', 'hinge', 'bracket', 'caster', 'rail', 'bulb',
+  'lamp', 'mat', 'extender', 'remote', 'part', 'parts', 'replacement',
+  'accessory', 'accessories', 'paddle', 'fin',
+];
+
+const ACCESSORY_RE = new RegExp(`\\b(${BULKY_ACCESSORY_TERMS.join('|')})(s|es)?\\b`, 'i');
+
+// Phrases where a bulky word is part of a small thing's name. Removed before
+// the bulky test so the rest of the title is still judged on its own.
+const NOT_BULKY_PHRASES = [
+  /\b(toaster|dutch|pizza|microwave|convection)\s+ovens?\b/gi,
+  /\b(hair|blow)\s+dryers?\b/gi,
+  /\b(pressure|power)\s+washers?\b/gi,
+  /\b(camp|camping|backpacking|portable)\s+stoves?\b/gi,
+  /\b(dishwasher|microwave|oven|freezer|food)[\s-]+safe\b/gi,
+  /\btable\s+(saw|runner|cloth)s?\b/gi,
+  /\bbench\s+(grinder|vise|vice)s?\b/gi,
+  /\bdesk\s+(organizer|fan|clock|speakers?|riser|clamp)s?\b/gi,
+  /\b(dog|cat|pet|truck)\s+beds?\b/gi,
+  /\b(side|rear\s?view|makeup|compact)\s+mirrors?\b/gi,
+  /\bgrill\s+(pan|tools?)\b/gi,
+  /\bsquat\s+proof\b/gi,
+];
+
+// Too ambiguous to count alone — "range extender", "price range", "safe for
+// kids". These only mean the bulky thing when the title says so.
+const NEEDS_CONTEXT = {
+  range: /\b(gas|electric|induction|stove|oven|cooktop|burners?|kitchen)\b/i,
+  safe: /\b(gun|rifle|fire\s?proof|vault|keypad|combination|biometric|liberty|sentry|cannon)\b/i,
+};
+
+function bulkyText(title, category) {
   const text = `${title} ${category}`;
-  return BULKY_RE.test(text) || BULKY_TV_RE.test(text);
+  if (ACCESSORY_RE.test(text)) return null;
+  return NOT_BULKY_PHRASES.reduce((t, re) => t.replace(re, ' '), text);
+}
+
+// The bulky term a title is about, singular, or null. Matching uses it as the
+// item type, so it has to agree with isBulky or the two paths would disagree
+// about what the listing is.
+export function bulkyTerm(title = '', category = '') {
+  const text = bulkyText(title, category);
+  if (text == null) return null;
+  for (const m of text.matchAll(BULKY_RE)) {
+    const term = m[1].toLowerCase();
+    if (NEEDS_CONTEXT[term] && !NEEDS_CONTEXT[term].test(text)) continue;
+    return term;
+  }
+  return null;
+}
+
+export function isBulky(title = '', category = '') {
+  if (bulkyTerm(title, category)) return true;
+  const text = bulkyText(title, category);
+  return text != null && BULKY_TV_RE.test(text);
 }
 
 // Local asking prices already sit in the local market, so the venue carries no

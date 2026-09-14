@@ -1,9 +1,9 @@
-import { matchProduct } from './match.js';
+import { matchProduct, MATCHER_VERSION } from './match.js';
 import { fetchComps } from './ebay.js';
 import { fetchLocalComps } from './localcomps.js';
 import { scoreListing } from './score.js';
 import { FRESHNESS } from './config.js';
-import { allIn } from './d1.js';
+import { allIn, chunk, placeholders } from './d1.js';
 
 // eBay Browse allows roughly 5k calls/day and each product costs two, so cap
 // how many fresh lookups one run can trigger. Cached products, and local comps
@@ -39,6 +39,85 @@ function upsertComp(db, c) {
     );
 }
 
+const UPSERT_MATCH_SQL = `INSERT INTO listing_matches
+     (listing_id, product_key, match_score, method, matched_at, matcher_version)
+   VALUES (?,?,?,?,?,?)
+   ON CONFLICT (listing_id) DO UPDATE SET
+     product_key = excluded.product_key, match_score = excluded.match_score,
+     method = excluded.method, matched_at = excluded.matched_at,
+     matcher_version = excluded.matcher_version`;
+
+// Redo matches made by an older matcher. Scores are only ever computed for
+// unscored listings, so without this a matcher fix would never touch anything
+// already in the ranking.
+//
+// A key change moves a listing between local comp pools, which changes the
+// median for everyone left in the old pool and everyone joining the new one.
+// So every local key touched has its cached comp dropped and every listing in
+// it has its score dropped; the scoring pass below then prices them afresh.
+// Local comps are one D1 query each, so this costs no eBay calls. eBay-keyed
+// listings whose key changed are rescored too, but untouched eBay pools aren't.
+//
+// Bounded like the rest of the run. If a pool's members land in different
+// batches it is invalidated once per batch and settles on the last one.
+export async function rematchOutdated(db, { limit = 200, now = Date.now() } = {}) {
+  const { results: outdated } = await db
+    .prepare(
+      `SELECT l.id, l.title, l.category, m.product_key AS old_key
+       FROM listing_matches m
+       JOIN listings l ON l.id = m.listing_id
+       WHERE m.matcher_version < ? AND l.status = 'active'
+       LIMIT ?`
+    )
+    .bind(MATCHER_VERSION, limit)
+    .all();
+
+  if (!outdated.length) return { rematched: 0, changed: 0 };
+
+  const stmts = [];
+  const touchedLocal = new Set();
+  const changedIds = [];
+
+  for (const l of outdated) {
+    const m = matchProduct(l.title, l.category ?? '');
+    const newKey = m?.product_key ?? null;
+
+    if (newKey !== l.old_key) {
+      changedIds.push(l.id);
+      if (l.old_key.startsWith('local:')) touchedLocal.add(l.old_key);
+      if (newKey?.startsWith('local:')) touchedLocal.add(newKey);
+    }
+
+    stmts.push(
+      m
+        ? db.prepare(UPSERT_MATCH_SQL).bind(l.id, m.product_key, m.match_score, m.method, now, MATCHER_VERSION)
+        // No longer matches at all. Leaving the old row would keep it in a
+        // local pool it no longer belongs to.
+        : db.prepare('DELETE FROM listing_matches WHERE listing_id = ?').bind(l.id)
+    );
+  }
+
+  for (const pools of chunk([...touchedLocal])) {
+    const ph = placeholders(pools);
+    stmts.push(db.prepare(`DELETE FROM comps WHERE product_key IN (${ph})`).bind(...pools));
+    stmts.push(
+      db
+        .prepare(
+          `DELETE FROM scores WHERE listing_id IN
+             (SELECT listing_id FROM listing_matches WHERE product_key IN (${ph}))`
+        )
+        .bind(...pools)
+    );
+  }
+  for (const ids of chunk(changedIds)) {
+    stmts.push(db.prepare(`DELETE FROM scores WHERE listing_id IN (${placeholders(ids)})`).bind(...ids));
+  }
+
+  // One batch, in order: the pool-wide score delete must see the new keys.
+  await db.batch(stmts);
+  return { rematched: outdated.length, changed: changedIds.length };
+}
+
 // Listings that have gone unseen long enough to be treated as removed. Uses
 // last_seen rather than first_seen deliberately: an item you re-encounter every
 // week is demonstrably still listed no matter how old the post is.
@@ -60,6 +139,7 @@ export async function resolvePending(
 
   // Cheap, and keeps dead listings from accumulating at the top of the ranking.
   const swept = await sweepStale(db, now);
+  const rematch = await rematchOutdated(db, { limit, now });
 
   const { results: pending } = await db
     .prepare(
@@ -76,7 +156,7 @@ export async function resolvePending(
     .all();
 
   if (!pending.length) {
-    return { pending: 0, matched: 0, scored: 0, comp_fetches: 0, local_comps: 0, swept };
+    return { pending: 0, matched: 0, scored: 0, comp_fetches: 0, local_comps: 0, swept, rematch };
   }
 
   const matches = new Map();
@@ -93,14 +173,8 @@ export async function resolvePending(
     const listing = pending.find((l) => l.id === listingId);
     matchStmts.push(
       db
-        .prepare(
-          `INSERT INTO listing_matches (listing_id, product_key, match_score, method, matched_at)
-           VALUES (?,?,?,?,?)
-           ON CONFLICT (listing_id) DO UPDATE SET
-             product_key = excluded.product_key, match_score = excluded.match_score,
-             method = excluded.method, matched_at = excluded.matched_at`
-        )
-        .bind(listingId, m.product_key, m.match_score, m.method, now)
+        .prepare(UPSERT_MATCH_SQL)
+        .bind(listingId, m.product_key, m.match_score, m.method, now, MATCHER_VERSION)
     );
     matchStmts.push(
       db
@@ -214,6 +288,7 @@ export async function resolvePending(
     comp_fetches: fetches,
     local_comps: localComps,
     swept,
+    rematch,
     products: keys.length,
   };
 }

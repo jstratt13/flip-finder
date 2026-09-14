@@ -5,7 +5,12 @@
 // system: a bad match invents a comp and manufactures fake profit, so anything
 // weakly matched is scored with low confidence and gated out of the ranking.
 
-import { BULKY_TERMS, isBulky } from './config.js';
+import { bulkyTerm, isBulky } from './config.js';
+
+// Bump whenever a change here would give an existing listing a different key.
+// resolve re-matches every listing below this version, so fixes reach listings
+// that were already scored instead of only new captures.
+export const MATCHER_VERSION = 2;
 
 const BRANDS = new Set([
   'apple', 'samsung', 'sony', 'lg', 'dell', 'hp', 'lenovo', 'asus', 'acer', 'msi',
@@ -77,11 +82,16 @@ const FORMS = new Set([
   'dining', 'coffee', 'console', 'accent', 'patio', 'outdoor', 'standing',
 ]);
 
-function matchBulky(tokens, brand) {
-  const type = tokens.find((t) => BULKY_TERMS.includes(t) || BULKY_TERMS.includes(t.replace(/s$/, '')));
-  if (!type) return null;
+function matchBulky(tokens, brand, term) {
+  if (!term) return null;
+  // Multi-word terms ("hot tub") become one key segment; plurals collapse so
+  // "chairs" and "chair" share a comp pool.
+  const type = term.replace(/\s+/g, '-');
+  const termWords = term.split(/\s+/);
 
-  const modifiers = tokens.filter((t) => t !== type && (MATERIALS.has(t) || FORMS.has(t)));
+  const modifiers = tokens.filter(
+    (t) => !termWords.includes(t.replace(/s$/, '')) && !termWords.includes(t) && (MATERIALS.has(t) || FORMS.has(t))
+  );
 
   const kept = [...new Set([...(brand ? [brand] : []), type, ...modifiers.slice(0, 3)])];
 
@@ -128,7 +138,7 @@ export function matchProduct(title, category = '') {
   const brand = tokens.find((t) => BRANDS.has(t)) ?? null;
 
   if (isBulky(norm, category)) {
-    const bulky = matchBulky(tokens, brand);
+    const bulky = matchBulky(tokens, brand, bulkyTerm(norm, category));
     if (bulky) return bulky;
   }
 
