@@ -3,6 +3,7 @@ import { fetchComps } from './ebay.js';
 import { fetchLocalComps } from './localcomps.js';
 import { scoreListing } from './score.js';
 import { FRESHNESS } from './config.js';
+import { allIn } from './d1.js';
 
 // eBay Browse allows roughly 5k calls/day and each product costs two, so cap
 // how many fresh lookups one run can trigger. Cached products, and local comps
@@ -115,14 +116,13 @@ export async function resolvePending(
   const keys = [...new Set([...matches.values()].map((m) => m.product_key))];
 
   const compByKey = new Map();
-  if (keys.length) {
-    const ph = keys.map(() => '?').join(',');
-    const { results: cached } = await db
-      .prepare(`SELECT * FROM comps WHERE product_key IN (${ph}) AND expires_at > ?`)
-      .bind(...keys, now)
-      .all();
-    for (const c of cached) compByKey.set(c.product_key, c);
-  }
+  const cached = await allIn(
+    db,
+    (ph) => `SELECT * FROM comps WHERE product_key IN (${ph}) AND expires_at > ?`,
+    keys,
+    [now]
+  );
+  for (const c of cached) compByKey.set(c.product_key, c);
 
   const staleKeys = keys.filter((k) => !compByKey.has(k));
   const queryFor = new Map([...matches.values()].map((m) => [m.product_key, m.query]));
@@ -162,13 +162,11 @@ export async function resolvePending(
     }
   }
 
-  const { results: conditions } = await db
-    .prepare(
-      `SELECT listing_id, band, multiplier, confidence FROM conditions
-       WHERE listing_id IN (${pending.map(() => '?').join(',')})`
-    )
-    .bind(...pending.map((l) => l.id))
-    .all();
+  const conditions = await allIn(
+    db,
+    (ph) => `SELECT listing_id, band, multiplier, confidence FROM conditions WHERE listing_id IN (${ph})`,
+    pending.map((l) => l.id)
+  );
   const condById = new Map(conditions.map((c) => [c.listing_id, c]));
 
   const scoreStmts = [];

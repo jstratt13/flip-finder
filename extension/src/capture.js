@@ -4,7 +4,9 @@
 // virtualise (Facebook) destroy nodes once scrolled past, so anything not taken
 // at mount time is gone.
 globalThis.FFCapture = (function () {
-  const MAX_BATCH = 100;
+  // The worker chunks its lookups, so this isn't load-bearing, but it keeps
+  // each ingest under D1's 100-parameter statement limit anyway.
+  const MAX_BATCH = 90;
   const FLUSH_MS = 4000;
 
   const seen = new Set();

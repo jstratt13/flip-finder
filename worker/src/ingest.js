@@ -2,6 +2,7 @@ import { HOME, haversineMi } from './config.js';
 import { assessCondition } from './condition.js';
 import { categorize } from './categorize.js';
 import { coordsForCity } from './cities.js';
+import { allIn } from './d1.js';
 
 const SOURCES = new Set(['facebook', 'craigslist', 'ebay']);
 
@@ -84,11 +85,7 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
   // Read current prices first so we can record genuine changes rather than
   // rewriting every row on every re-capture.
   const ids = accepted.map((n) => n.id);
-  const placeholders = ids.map(() => '?').join(',');
-  const { results: existing } = await db
-    .prepare(`SELECT id, price FROM listings WHERE id IN (${placeholders})`)
-    .bind(...ids)
-    .all();
+  const existing = await allIn(db, (ph) => `SELECT id, price FROM listings WHERE id IN (${ph})`, ids);
   const priorPrice = new Map(existing.map((r) => [r.id, r.price]));
 
   // One listing can arrive twice in a batch (grid card plus detail page), so
@@ -183,13 +180,11 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
 
   // Scores are returned per listing so the extension can annotate cards in-page
   // later without changing this contract. Null until matching and comps land.
-  const { results: scored } = await db
-    .prepare(
-      `SELECT listing_id, score, profit, roi, confidence
-       FROM scores WHERE listing_id IN (${placeholders})`
-    )
-    .bind(...ids)
-    .all();
+  const scored = await allIn(
+    db,
+    (ph) => `SELECT listing_id, score, profit, roi, confidence FROM scores WHERE listing_id IN (${ph})`,
+    ids
+  );
   const scoreById = new Map(scored.map((r) => [r.listing_id, r]));
 
   return {
