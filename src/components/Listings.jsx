@@ -6,7 +6,9 @@ const BAND_LABEL = {
   good: 'Good',
   fair: 'Fair',
   parts: 'For Parts',
-  unknown: 'Unknown',
+  // Named, because a bare "Unknown" sat beside the confidence pill's own
+  // "Unknown" and the two couldn't be told apart.
+  unknown: 'Condition unknown',
 };
 
 export const money = (n) =>
@@ -32,11 +34,12 @@ function freshness(lastSeen) {
 
 // Confidence earns a word rather than a bare number: the figure only means
 // something relative to the gate, and a colour alone can't say which side.
+// The word names what it measures — "High" alone didn't say high what.
 function confidenceLabel(c) {
-  if (c == null) return { text: 'Unknown', level: 'low' };
-  if (c >= 0.85) return { text: 'High', level: 'high' };
-  if (c >= 0.7) return { text: 'Solid', level: 'mid' };
-  return { text: 'Thin', level: 'low' };
+  if (c == null) return { text: 'Confidence unknown', level: 'low' };
+  if (c >= 0.85) return { text: 'High confidence', level: 'high' };
+  if (c >= 0.7) return { text: 'Solid confidence', level: 'mid' };
+  return { text: 'Thin confidence', level: 'low' };
 }
 
 function Card({ row, onOpen }) {
@@ -83,7 +86,7 @@ function Card({ row, onOpen }) {
 
         <div className="meta">
           <span className={`pill ${conf.level}`}>{conf.text}</span>
-          <span className="pill quiet">{BAND_LABEL[row.condition_band] ?? 'Unknown'}</span>
+          <span className="pill quiet">{BAND_LABEL[row.condition_band] ?? BAND_LABEL.unknown}</span>
           {row.acquisition_mode === 'shipped' ? (
             <span className="pill quiet">Ships</span>
           ) : row.distance_mi != null ? (
