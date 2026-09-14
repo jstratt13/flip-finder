@@ -4,11 +4,25 @@ import { fetchLocalComps } from './localcomps.js';
 import { scoreListing } from './score.js';
 import { FRESHNESS } from './config.js';
 import { allIn, chunk, placeholders } from './d1.js';
+import { createMeter, metered } from './budget.js';
 
 // eBay Browse allows roughly 5k calls/day and each product costs two, so cap
-// how many fresh lookups one run can trigger. Cached products, and local comps
-// (which are just a D1 query), are unlimited.
+// how many fresh lookups one run can trigger. On the free Workers plan the
+// subrequest budget (budget.js) binds long before this does.
 const MAX_COMP_FETCHES = 40;
+
+// Subrequests each pricing step costs, used to stop before the budget runs out.
+// Local: the pool query plus the comp upsert. eBay: two searches, each reading
+// the token cache and fetching, plus the upsert. A token refresh adds the OAuth
+// fetch and the cache write.
+const COST_LOCAL = 2;
+const COST_EBAY = 5;
+const COST_EBAY_TOKEN = 2;
+
+// Listings matched and scored per run. The free plan gives a cron run 10 ms of
+// CPU; 200 listings measured ~6 ms locally, which is too close to trust on
+// slower hardware. Pricing throughput is set by the subrequest budget anyway.
+const DEFAULT_LIMIT = 100;
 
 // A listing that failed to price (eBay down, rate limited, no comps yet) gets a
 // score row with a null score. Without a retry window it would never be looked
@@ -131,9 +145,10 @@ export async function sweepStale(db, now = Date.now()) {
 }
 
 export async function resolvePending(
-  env,
-  { limit = 200, fetchImpl = fetch, retryUnscoredMs = RETRY_UNSCORED_MS } = {}
+  rawEnv,
+  { limit = DEFAULT_LIMIT, fetchImpl: rawFetch = fetch, retryUnscoredMs = RETRY_UNSCORED_MS, meter = createMeter() } = {}
 ) {
+  const { env, fetchImpl } = metered(rawEnv, rawFetch, meter);
   const db = env.DB;
   const now = Date.now();
 
@@ -156,7 +171,7 @@ export async function resolvePending(
     .all();
 
   if (!pending.length) {
-    return { pending: 0, matched: 0, scored: 0, comp_fetches: 0, local_comps: 0, swept, rematch };
+    return { pending: 0, matched: 0, scored: 0, comp_fetches: 0, local_comps: 0, swept, rematch, subrequests: meter.used };
   }
 
   const matches = new Map();
@@ -201,39 +216,66 @@ export async function resolvePending(
   const staleKeys = keys.filter((k) => !compByKey.has(k));
   const queryFor = new Map([...matches.values()].map((m) => [m.product_key, m.query]));
 
+  // Held back for the calls every run must still make after pricing: the
+  // conditions lookup and the batch that saves the scores.
+  const reserve = chunk(pending).length + 1;
+
+  // Products the budget didn't reach this run. Their listings get no score row,
+  // so they stay pending and are picked up 15 minutes from now rather than
+  // parked for the 6-hour retry window as if pricing had failed.
+  const deferred = new Set();
+
+  // Without credentials every lookup fails anyway, after reading the token cache
+  // twice — enough wasted calls to exhaust the budget on its own. Those listings
+  // take the normal "awaiting comps" path instead.
+  const ebayConfigured = Boolean(rawEnv.EBAY_CLIENT_ID && rawEnv.EBAY_CLIENT_SECRET);
+
   let localComps = 0;
-  const needsEbayFallback = [];
-
-  for (const key of staleKeys.filter(isLocalKey)) {
-    const comp = await fetchLocalComps(db, { product_key: key });
-
-    // Cold start: until enough local listings accumulate there is nothing to
-    // compare against, so fall back to eBay rather than leaving bulky items
-    // permanently unpriced. The venue mix stays local either way.
-    if (comp.active_median == null) {
-      needsEbayFallback.push(key);
-      continue;
-    }
-
-    compByKey.set(key, comp);
-    await upsertComp(db, comp).run();
-    localComps += 1;
-  }
-
   let fetches = 0;
-  const ebayKeys = [...staleKeys.filter((k) => !isLocalKey(k)), ...needsEbayFallback];
+  let ebayDown = false;
 
-  for (const key of ebayKeys.slice(0, MAX_COMP_FETCHES)) {
+  const lookupEbay = async (key) => {
     try {
       const comp = await fetchComps(env, { product_key: key, query: queryFor.get(key) }, fetchImpl);
       compByKey.set(key, comp);
       await upsertComp(db, comp).run();
-      fetches += 1;
     } catch (err) {
       // Rate limiting or an outage shouldn't abort the run; the rest of the
       // batch still scores against cached comps.
-      if (String(err.message).includes('rate limited')) break;
+      if (String(err.message).includes('rate limited')) ebayDown = true;
     }
+    fetches += 1;
+  };
+
+  // Each product is taken start to finish, and only started if its worst case
+  // fits the budget. Pricing pools first and eBay fallbacks later let a backlog
+  // of cold local pools spend the budget on queries that found nothing, defer
+  // every fallback, and repeat identically every run — never making progress.
+  for (const key of staleKeys) {
+    const canEbay = ebayConfigured && !ebayDown && fetches < MAX_COMP_FETCHES;
+    // The first eBay lookup of a run may also have to refresh the OAuth token.
+    const ebayCost = COST_EBAY + (fetches === 0 ? COST_EBAY_TOKEN : 0);
+    const worst = isLocalKey(key) ? COST_LOCAL + (canEbay ? ebayCost : 0) : canEbay ? ebayCost : 0;
+
+    if (worst && !meter.canSpend(worst, reserve)) {
+      deferred.add(key);
+      continue;
+    }
+
+    if (isLocalKey(key)) {
+      const comp = await fetchLocalComps(db, { product_key: key });
+      if (comp.active_median != null) {
+        compByKey.set(key, comp);
+        await upsertComp(db, comp).run();
+        localComps += 1;
+        continue;
+      }
+      // Cold start: until enough local listings accumulate there is nothing to
+      // compare against, so fall back to eBay rather than leaving bulky items
+      // permanently unpriced. The venue mix stays local either way.
+    }
+
+    if (canEbay) await lookupEbay(key);
   }
 
   const conditions = await allIn(
@@ -248,7 +290,7 @@ export async function resolvePending(
 
   for (const listing of pending) {
     const match = matches.get(listing.id);
-    if (!match) continue;
+    if (!match || deferred.has(match.product_key)) continue;
 
     const s = scoreListing({
       listing,
@@ -290,5 +332,7 @@ export async function resolvePending(
     swept,
     rematch,
     products: keys.length,
+    deferred: deferred.size,
+    subrequests: meter.used,
   };
 }

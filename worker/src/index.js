@@ -677,7 +677,8 @@ async function route(request, env) {
       }
       if (u.pathname === '/admin/resolve') {
         if (!isAdmin(request, env)) return unauthorized();
-        const limit = Math.min(Number(u.searchParams.get('limit')) || 200, 500);
+        // Same 10 ms CPU and 50-subrequest limits as the cron on the free plan.
+        const limit = Math.min(Number(u.searchParams.get('limit')) || 100, 200);
         const retry = u.searchParams.has('retry_now') ? 0 : undefined;
         return json(await resolvePending(env, { limit, retryUnscoredMs: retry }));
       }

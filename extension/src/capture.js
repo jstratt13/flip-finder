@@ -4,9 +4,11 @@
 // virtualise (Facebook) destroy nodes once scrolled past, so anything not taken
 // at mount time is gone.
 globalThis.FFCapture = (function () {
-  // The worker chunks its lookups, so this isn't load-bearing, but it keeps
-  // each ingest under D1's 100-parameter statement limit anyway.
-  const MAX_BATCH = 90;
+  // Sized for the free Workers plan's 10 ms CPU per request: 90 detail records
+  // measured ~5 ms of ingest CPU locally, 50 about 2.8 ms, leaving room for
+  // slower hardware. Grid cards cost a third as much. Also keeps each ingest
+  // well under D1's 100-parameter limit, though the worker chunks regardless.
+  const MAX_BATCH = 50;
   const FLUSH_MS = 4000;
 
   // Single-page sites change the URL without reloading, so the content script
