@@ -1,5 +1,5 @@
 import { matchProduct, MATCHER_VERSION } from './match.js';
-import { fetchComps } from './ebay.js';
+import { fetchComps, getToken } from './ebay.js';
 import { fetchLocalComps } from './localcomps.js';
 import { scoreListing } from './score.js';
 import { FRESHNESS } from './config.js';
@@ -12,12 +12,12 @@ import { createMeter, metered } from './budget.js';
 const MAX_COMP_FETCHES = 40;
 
 // Subrequests each pricing step costs, used to stop before the budget runs out.
-// Local: the pool query plus the comp upsert. eBay: two searches, each reading
-// the token cache and fetching, plus the upsert. A token refresh adds the OAuth
-// fetch and the cache write.
-const COST_LOCAL = 2;
-const COST_EBAY = 5;
-const COST_EBAY_TOKEN = 2;
+// Comp writes ride in the final score batch, so they cost nothing here.
+// Local: the pool query. eBay: the two searches. The token is fetched once per
+// run — a cache read, plus the OAuth fetch and cache write when it has expired.
+const COST_LOCAL = 1;
+const COST_EBAY = 2;
+const COST_EBAY_TOKEN = 3;
 
 // Listings matched and scored per run. The free plan gives a cron run 10 ms of
 // CPU; 200 listings measured ~6 ms locally, which is too close to trust on
@@ -234,11 +234,17 @@ export async function resolvePending(
   let fetches = 0;
   let ebayDown = false;
 
+  // Comp writes are collected and saved in the same batch as the scores: one
+  // subrequest for all of them instead of one each.
+  const compStmts = [];
+  let token = null;
+
   const lookupEbay = async (key) => {
     try {
-      const comp = await fetchComps(env, { product_key: key, query: queryFor.get(key) }, fetchImpl);
+      token ??= await getToken(env, fetchImpl);
+      const comp = await fetchComps(env, { product_key: key, query: queryFor.get(key), token }, fetchImpl);
       compByKey.set(key, comp);
-      await upsertComp(db, comp).run();
+      compStmts.push(upsertComp(db, comp));
     } catch (err) {
       // Rate limiting or an outage shouldn't abort the run; the rest of the
       // batch still scores against cached comps.
@@ -253,8 +259,8 @@ export async function resolvePending(
   // every fallback, and repeat identically every run — never making progress.
   for (const key of staleKeys) {
     const canEbay = ebayConfigured && !ebayDown && fetches < MAX_COMP_FETCHES;
-    // The first eBay lookup of a run may also have to refresh the OAuth token.
-    const ebayCost = COST_EBAY + (fetches === 0 ? COST_EBAY_TOKEN : 0);
+    // Until this run holds a token, a lookup may also have to fetch one.
+    const ebayCost = COST_EBAY + (token ? 0 : COST_EBAY_TOKEN);
     const worst = isLocalKey(key) ? COST_LOCAL + (canEbay ? ebayCost : 0) : canEbay ? ebayCost : 0;
 
     if (worst && !meter.canSpend(worst, reserve)) {
@@ -266,7 +272,7 @@ export async function resolvePending(
       const comp = await fetchLocalComps(db, { product_key: key });
       if (comp.active_median != null) {
         compByKey.set(key, comp);
-        await upsertComp(db, comp).run();
+        compStmts.push(upsertComp(db, comp));
         localComps += 1;
         continue;
       }
@@ -321,7 +327,8 @@ export async function resolvePending(
     );
   }
 
-  if (scoreStmts.length) await db.batch(scoreStmts);
+  const writes = [...compStmts, ...scoreStmts];
+  if (writes.length) await db.batch(writes);
 
   return {
     pending: pending.length,

@@ -69,10 +69,33 @@ test('a run with a large eBay backlog stays inside the free-plan limit', async (
   const r = await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
 
   assert.ok(plat.used() <= SUBREQUEST_LIMIT, `${plat.used()} subrequests`);
-  assert.ok(r.comp_fetches > 0, 'still prices something every run');
+  // 16 once the token is read once per run and comps ride in the score batch;
+  // 6 before. A regression here halves how fast the backlog drains.
+  assert.ok(r.comp_fetches >= 16, `only ${r.comp_fetches} products priced in a run`);
   assert.ok(r.deferred > 0, 'the rest waits for the next run');
   // The meter's own count agrees with the platform's.
   assert.equal(r.subrequests, plat.used());
+});
+
+test('the eBay token is read once per run, not once per search', async () => {
+  const plat = freePlan({ pending: listings(100) });
+  let tokenReads = 0;
+  const get = plat.env.CACHE.get;
+  plat.env.CACHE.get = async (k) => ((tokenReads += k === 'ebay:token' ? 1 : 0), get(k));
+  const r = await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
+  assert.ok(r.comp_fetches > 1);
+  assert.equal(tokenReads, 1);
+});
+
+test('comp writes are saved in the same batch as the scores', async () => {
+  const plat = freePlan({ pending: listings(100) });
+  const batches = [];
+  const batch = plat.env.DB.batch;
+  plat.env.DB.batch = async (stmts) => (batches.push(stmts.map((s) => s.sql)), batch(stmts));
+  await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
+  const last = batches.at(-1);
+  assert.ok(last.some((sql) => /INSERT INTO comps/.test(sql)), 'comps missing from the final batch');
+  assert.ok(last.some((sql) => /INSERT INTO scores/.test(sql)));
 });
 
 test('deferred products get no score row, so the next run picks them up', async () => {

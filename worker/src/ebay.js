@@ -57,8 +57,10 @@ export async function getToken(env, fetchImpl = fetch) {
   }
 }
 
-export async function search(env, { query, conditionId, limit = 50 }, fetchImpl = fetch) {
-  const token = await getToken(env, fetchImpl);
+// `token` lets a caller fetch it once and reuse it: on the free plan every
+// token-cache read is a subrequest, and two per product added up.
+export async function search(env, { query, conditionId, limit = 50, token }, fetchImpl = fetch) {
+  token ??= await getToken(env, fetchImpl);
   const url = new URL(SEARCH_URL);
   url.searchParams.set('q', query);
   url.searchParams.set('limit', String(limit));
@@ -88,16 +90,16 @@ export async function search(env, { query, conditionId, limit = 50 }, fetchImpl 
 // Two calls per product: new-condition median is the retail anchor, used median
 // is the resale signal. Cached by product_key so many listings of the same item
 // cost one lookup.
-export async function fetchComps(env, { product_key, query }, fetchImpl = fetch) {
+export async function fetchComps(env, { product_key, query, token }, fetchImpl = fetch) {
   let newErr = null;
   let usedErr = null;
 
   const [newItems, usedItems] = await Promise.all([
-    search(env, { query, conditionId: CONDITION.NEW }, fetchImpl).catch((e) => {
+    search(env, { query, conditionId: CONDITION.NEW, token }, fetchImpl).catch((e) => {
       newErr = e;
       return [];
     }),
-    search(env, { query, conditionId: CONDITION.USED }, fetchImpl).catch((e) => {
+    search(env, { query, conditionId: CONDITION.USED, token }, fetchImpl).catch((e) => {
       usedErr = e;
       return [];
     }),
