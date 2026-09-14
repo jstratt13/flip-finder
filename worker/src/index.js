@@ -1,4 +1,5 @@
 import { ingestBatch } from './ingest.js';
+import { capturedListings } from './captured.js';
 import { resolvePending } from './resolve.js';
 import { HOME, SCORING } from './config.js';
 import { CATEGORIES } from './categorize.js';
@@ -327,90 +328,16 @@ async function handleWatchlist(request, env, user) {
   return json({ ok: true, watched: true });
 }
 
-// Everything captured, with why each one isn't in the ranking.
-//
-// Without this the dashboard looks identical whether nothing good turned up
-// today or capture broke three weeks ago. The reason per listing is the whole
-// point — "no product match" and "awaiting comps" call for very different
-// responses, and neither is visible from an empty Opportunities tab.
-function rankingReason(r, gates) {
-  if (r.acquired) return { code: 'acquired', label: 'Bought' };
-  if (r.status !== 'active') return { code: 'gone', label: 'No longer listed' };
-  if (r.price == null) return { code: 'no_price', label: 'No price' };
-  if (!r.product_key) return { code: 'no_match', label: 'No product match' };
-  if (r.active_median == null && r.retail_price == null) {
-    return { code: 'no_comps', label: 'Awaiting comps' };
-  }
-  if (r.score == null) {
-    return { code: 'no_margin', label: 'No margin at this price' };
-  }
-  if (r.profit < gates.min_profit) {
-    return { code: 'low_profit', label: `Profit $${Math.round(r.profit)}` };
-  }
-  if (r.confidence < gates.min_confidence) {
-    return { code: 'low_confidence', label: `Confidence ${r.confidence.toFixed(2)}` };
-  }
-  if (r.roi < gates.min_roi) {
-    return { code: 'low_roi', label: `ROI ${Math.round(r.roi * 100)}%` };
-  }
-  return { code: 'ranking', label: 'In the ranking' };
-}
-
 async function handleCaptured(request, env) {
   const u = new URL(request.url);
-  const limit = Math.min(Number(u.searchParams.get('limit')) || 200, 500);
-  const source = u.searchParams.get('source');
-
-  const where = [];
-  const binds = [];
-  if (source && source !== 'all') {
-    where.push('l.source = ?');
-    binds.push(source);
-  }
-
-  // Free-text search over what was captured. Every term must appear, in either
-  // the title or the description — this is for finding one listing you already
-  // know about, not for browsing, so narrowing beats recall.
-  const terms = (u.searchParams.get('q') ?? '')
-    .toLowerCase()
-    .split(/\s+/)
-    .map((t) => t.trim())
-    .filter(Boolean)
-    .slice(0, 6);
-
-  for (const term of terms) {
-    where.push("(LOWER(l.title) LIKE ? OR LOWER(COALESCE(l.description, '')) LIKE ?)");
-    binds.push(`%${term}%`, `%${term}%`);
-  }
-
-  const { results } = await env.DB.prepare(
-    `SELECT l.id, l.source, l.title, l.price, l.url, l.thumb_url, l.category,
-            l.last_seen, l.status, l.distance_mi, l.geo_source, l.acquisition_mode,
-            c.band AS condition_band,
-            m.product_key, m.match_score,
-            cp.active_median, cp.retail_price, cp.n_active,
-            s.score, s.profit, s.roi, s.confidence, s.anchor_value, s.anchor_source,
-            s.est_net_blended, s.acquisition_cost,
-            EXISTS (SELECT 1 FROM acquisitions a WHERE a.listing_id = l.id) AS acquired,
-            EXISTS (SELECT 1 FROM watchlist w WHERE w.listing_id = l.id) AS watched
-     FROM listings l
-     LEFT JOIN conditions c ON c.listing_id = l.id
-     LEFT JOIN listing_matches m ON m.listing_id = l.id
-     LEFT JOIN comps cp ON cp.product_key = m.product_key
-     LEFT JOIN scores s ON s.listing_id = l.id
-     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY l.last_seen DESC
-     LIMIT ?`
-  )
-    .bind(...binds, limit)
-    .all();
-
-  const listings = results.map((r) => ({ ...r, reason: rankingReason(r, SCORING) }));
-
-  const summary = {};
-  for (const l of listings) summary[l.reason.code] = (summary[l.reason.code] ?? 0) + 1;
-
-  return json({ count: listings.length, summary, listings });
+  const result = await capturedListings(env.DB, {
+    source: u.searchParams.get('source'),
+    q: u.searchParams.get('q'),
+    reason: u.searchParams.get('reason'),
+    limit: Math.min(Number(u.searchParams.get('limit')) || 200, 500),
+    gates: SCORING,
+  });
+  return json(result);
 }
 
 // Counts drive the checkbox list, and they respect the same gates as the

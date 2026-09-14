@@ -33,6 +33,9 @@ export default function App() {
   const [captured, setCaptured] = useState(null);
   const [saved, setSaved] = useState(null);
   const [query, setQuery] = useState('');
+  // The Captured tab's reason filter. Held here, not in the tab, so it survives
+  // switching tabs and applies server-side to everything captured.
+  const [reason, setReason] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -69,7 +72,7 @@ export default function App() {
       }
 
       if (view === 'captured') {
-        const data = await api.captured({ source: filters.source, q: query });
+        const data = await api.captured({ source: filters.source, q: query, reason });
         if (seq !== requestSeq.current) return;
         setCaptured(data);
         return;
@@ -110,7 +113,7 @@ export default function App() {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [user, filters, selected, view, query]);
+  }, [user, filters, selected, view, query, reason]);
 
   useEffect(() => {
     refresh();
@@ -225,6 +228,8 @@ export default function App() {
             onToggleWatch={toggleWatch}
             query={query}
             onQueryChange={setQuery}
+            reason={reason}
+            onReasonChange={setReason}
           />
         )}
         {view === 'watchlist' && (

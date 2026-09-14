@@ -642,22 +642,54 @@ main { padding-bottom: 20px; }
   padding: 12px var(--pad);
 }
 
-.tally li {
+.tally li { display: flex; }
+
+/* Each reason is a filter. Sized for a thumb: the tally wraps to several rows
+   on a phone, and a 22px-tall pill was too easy to miss. */
+.tally-chip {
+  font: inherit;
   font-size: 12px;
   color: var(--muted);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 100px;
-  padding: 3px 10px;
+  padding: 0 11px;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
 }
 
-.tally li b { color: var(--accent); font-variant-numeric: tabular-nums; }
-.tally li.ok { border-color: #bcdfc9; background: #e8f3ec; }
-.tally li.ok b { color: var(--gain); }
-.tally li.warn { border-color: #edc9c6; background: #fbeceb; }
-.tally li.warn b { color: var(--loss); }
-.tally li.info { border-color: #eed6a8; background: #fdf3e3; }
-.tally li.info b { color: var(--thin); }
+.tally-chip b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.tally-chip.ok { border-color: #bcdfc9; background: #e8f3ec; }
+.tally-chip.ok b { color: var(--gain); }
+.tally-chip.warn { border-color: #edc9c6; background: #fbeceb; }
+.tally-chip.warn b { color: var(--loss); }
+.tally-chip.info { border-color: #eed6a8; background: #fdf3e3; }
+.tally-chip.info b { color: var(--thin); }
+
+@media (hover: hover) {
+  .tally-chip:hover { border-color: var(--line-strong); color: var(--accent); }
+}
+
+/* Selected: inverted, so it reads as a state rather than another colour. */
+.tally-chip.on,
+.tally-chip.on.ok,
+.tally-chip.on.warn,
+.tally-chip.on.info {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+}
+.tally-chip.on b { color: var(--accent2); }
+
+.tally-chip:focus-visible,
+.tally-clear:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
+
+.tally-clear { font-size: 12px; min-height: 30px; padding: 0 4px; }
+
+.tally-cap { padding: 0 var(--pad); margin: -4px 0 8px; }
 
 .rows { list-style: none; margin: 0; padding: 0; }
 

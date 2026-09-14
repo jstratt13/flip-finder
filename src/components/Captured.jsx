@@ -47,7 +47,16 @@ function ageText(lastSeen) {
   return `${Math.round(days)}d`;
 }
 
-export default function Captured({ data, loading, onOpen, onToggleWatch, query, onQueryChange }) {
+export default function Captured({
+  data,
+  loading,
+  onOpen,
+  onToggleWatch,
+  query,
+  onQueryChange,
+  reason,
+  onReasonChange,
+}) {
   const search = (
     <div className="searchbar">
       <input
@@ -75,7 +84,10 @@ export default function Captured({ data, loading, onOpen, onToggleWatch, query, 
   }
   if (!data) return search;
 
-  if (!data.count) {
+  // Nothing captured (or nothing matches the search) at all. A reason filter
+  // that happens to match nothing is handled below, with the tallies still
+  // showing so it can be switched or cleared.
+  if (!data.total) {
     return (
       <>
         {search}
@@ -93,23 +105,55 @@ export default function Captured({ data, loading, onOpen, onToggleWatch, query, 
     );
   }
 
-  const counts = REASON_ORDER.filter((c) => data.summary[c]).map((c) => ({
+  // The active reason stays listed even at zero, so it can always be cleared.
+  const counts = REASON_ORDER.filter((c) => data.summary[c] || c === reason).map((c) => ({
     code: c,
     label: REASON_COPY[c],
-    n: data.summary[c],
+    n: data.summary[c] ?? 0,
   }));
 
   return (
     <>
       {search}
 
-      <ul className="tally">
-        {counts.map((c) => (
-          <li key={c.code} className={REASON_TONE[c.code] ?? ''}>
-            <b>{c.n}</b> {c.label}
+      <ul className="tally" aria-label="Filter by reason">
+        {counts.map((c) => {
+          const on = c.code === reason;
+          return (
+            <li key={c.code}>
+              <button
+                type="button"
+                className={['tally-chip', REASON_TONE[c.code] ?? '', on ? 'on' : ''].join(' ').trim()}
+                aria-pressed={on}
+                onClick={() => onReasonChange(on ? null : c.code)}
+                title={on ? 'Show every reason' : `Show only: ${c.label}`}
+              >
+                <b>{c.n}</b> {c.label}
+              </button>
+            </li>
+          );
+        })}
+        {reason && (
+          <li>
+            <button type="button" className="link tally-clear" onClick={() => onReasonChange(null)}>
+              Show all {data.total}
+            </button>
           </li>
-        ))}
+        )}
       </ul>
+
+      {data.matching > data.count && (
+        <p className="hint tally-cap">
+          Showing the {data.count} most recently seen of {data.matching}.
+        </p>
+      )}
+
+      {!data.count && (
+        <div className="empty">
+          <p className="empty-title">No listings with this reason right now.</p>
+          <p>They may have been scored or bought since. Pick another reason, or show all.</p>
+        </div>
+      )}
 
       <ul className="rows">
         {data.listings.map((l) => (
