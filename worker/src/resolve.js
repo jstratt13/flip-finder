@@ -24,10 +24,18 @@ const COST_EBAY_TOKEN = 3;
 // slower hardware. Pricing throughput is set by the subrequest budget anyway.
 const DEFAULT_LIMIT = 100;
 
-// A listing that failed to price (eBay down, rate limited, no comps yet) gets a
-// score row with a null score. Without a retry window it would never be looked
-// at again, so a transient outage would silently drop it forever.
-const RETRY_UNSCORED_MS = 6 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+
+// When a listing that couldn't be priced is looked at again. Retrying every
+// 6 hours forever rewrote the same rows four times a day per stuck listing,
+// which is what threatens D1's daily write limit as a backlog grows.
+//
+// Only a real attempt advances the schedule: no product match, or comps that
+// were in hand and still gave no score. Missing credentials, an eBay outage
+// or rate limiting say nothing about the listing, so those retry at the first
+// step and never push a listing out to three days while credentials are pending.
+const RETRY_AFTER_MS = [6 * HOUR, 24 * HOUR, 72 * HOUR];
+export const retryDelay = (attempts) => RETRY_AFTER_MS[Math.min(Math.max(attempts, 1), RETRY_AFTER_MS.length) - 1];
 
 const isLocalKey = (k) => k.startsWith('local:');
 
@@ -117,6 +125,14 @@ export async function rematchOutdated(db, { limit = 200, now = Date.now() } = {}
     stmts.push(
       db
         .prepare(
+          `UPDATE listings SET score_due_at = ?, score_attempts = 0 WHERE status = 'active' AND id IN
+             (SELECT listing_id FROM listing_matches WHERE product_key IN (${ph}))`
+        )
+        .bind(now, ...pools)
+    );
+    stmts.push(
+      db
+        .prepare(
           `DELETE FROM scores WHERE listing_id IN
              (SELECT listing_id FROM listing_matches WHERE product_key IN (${ph}))`
         )
@@ -125,6 +141,11 @@ export async function rematchOutdated(db, { limit = 200, now = Date.now() } = {}
   }
   for (const ids of chunk(changedIds)) {
     stmts.push(db.prepare(`DELETE FROM scores WHERE listing_id IN (${placeholders(ids)})`).bind(...ids));
+    stmts.push(
+      db
+        .prepare(`UPDATE listings SET score_due_at = ?, score_attempts = 0 WHERE id IN (${placeholders(ids)})`)
+        .bind(now, ...ids)
+    );
   }
 
   // One batch, in order: the pool-wide score delete must see the new keys.
@@ -138,7 +159,8 @@ export async function rematchOutdated(db, { limit = 200, now = Date.now() } = {}
 export async function sweepStale(db, now = Date.now()) {
   const cutoff = now - FRESHNESS.gone_after_days * 24 * 60 * 60 * 1000;
   const { meta } = await db
-    .prepare("UPDATE listings SET status = 'gone' WHERE status = 'active' AND last_seen < ?")
+    // Gone listings leave the scoring queue too, keeping its index small.
+    .prepare("UPDATE listings SET status = 'gone', score_due_at = NULL WHERE status = 'active' AND last_seen < ?")
     .bind(cutoff)
     .run();
   return meta?.changes ?? 0;
@@ -146,7 +168,7 @@ export async function sweepStale(db, now = Date.now()) {
 
 export async function resolvePending(
   rawEnv,
-  { limit = DEFAULT_LIMIT, fetchImpl: rawFetch = fetch, retryUnscoredMs = RETRY_UNSCORED_MS, meter = createMeter() } = {}
+  { limit = DEFAULT_LIMIT, fetchImpl: rawFetch = fetch, ignoreSchedule = false, meter = createMeter() } = {}
 ) {
   const { env, fetchImpl } = metered(rawEnv, rawFetch, meter);
   const db = env.DB;
@@ -158,16 +180,17 @@ export async function resolvePending(
 
   const { results: pending } = await db
     .prepare(
+      // Walks the partial due-time index, newest first, and stops at the limit:
+      // reads about as many rows as it returns, however large the table grows.
       `SELECT l.id, l.title, l.price, l.acquisition_mode, l.inbound_ship,
-              l.distance_mi, l.category
+              l.distance_mi, l.category, l.score_attempts
        FROM listings l
-       LEFT JOIN scores s ON s.listing_id = l.id
-       WHERE l.status = 'active' AND l.price IS NOT NULL
-         AND (s.listing_id IS NULL OR (s.score IS NULL AND s.computed_at <= ?))
-       ORDER BY l.last_seen DESC
+       WHERE l.score_due_at IS NOT NULL AND l.score_due_at <= ?
+         AND l.status = 'active' AND l.price IS NOT NULL
+       ORDER BY l.score_due_at DESC
        LIMIT ?`
     )
-    .bind(now - retryUnscoredMs, limit)
+    .bind(ignoreSchedule ? Number.MAX_SAFE_INTEGER : now, limit)
     .all();
 
   if (!pending.length) {
@@ -294,9 +317,23 @@ export async function resolvePending(
   const scoreStmts = [];
   let scored = 0;
 
+  // Where each listing goes in the queue next. Rides in the final batch.
+  const schedule = (listing, { done, attempted }) => {
+    const attempts = attempted ? (listing.score_attempts ?? 0) + 1 : listing.score_attempts ?? 0;
+    return db
+      .prepare('UPDATE listings SET score_due_at = ?, score_attempts = ? WHERE id = ?')
+      .bind(done ? null : now + retryDelay(attempts), done ? 0 : attempts, listing.id);
+  };
+
   for (const listing of pending) {
     const match = matches.get(listing.id);
-    if (!match || deferred.has(match.product_key)) continue;
+    if (!match) {
+      // Nothing to price against. Used to be retried on every single run.
+      scoreStmts.push(schedule(listing, { done: false, attempted: true }));
+      continue;
+    }
+    // Left due: the next run picks it up.
+    if (deferred.has(match.product_key)) continue;
 
     const s = scoreListing({
       listing,
@@ -306,6 +343,9 @@ export async function resolvePending(
     });
 
     if (s.score != null) scored += 1;
+    scoreStmts.push(
+      schedule(listing, { done: s.score != null, attempted: compByKey.has(match.product_key) })
+    );
 
     scoreStmts.push(
       db

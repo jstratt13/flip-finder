@@ -679,8 +679,9 @@ async function route(request, env) {
         if (!isAdmin(request, env)) return unauthorized();
         // Same 10 ms CPU and 50-subrequest limits as the cron on the free plan.
         const limit = Math.min(Number(u.searchParams.get('limit')) || 100, 200);
-        const retry = u.searchParams.has('retry_now') ? 0 : undefined;
-        return json(await resolvePending(env, { limit, retryUnscoredMs: retry }));
+        // retry_now scores everything queued, including listings backing off.
+        const ignoreSchedule = u.searchParams.has('retry_now');
+        return json(await resolvePending(env, { limit, ignoreSchedule }));
       }
 
       // Everything below is the dashboard and requires a signed-in person.

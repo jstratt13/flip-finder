@@ -18,7 +18,7 @@ function strictD1({ pending = [] } = {}) {
     bind: (...a) => stmt(sql, a),
     all: async () => {
       check(sql, args);
-      return { results: /LEFT JOIN scores s/.test(sql) ? pending : [] };
+      return { results: /score_due_at <= ?/.test(sql) ? pending : [] };
     },
     first: async () => (check(sql, args), null),
     run: async () => (check(sql, args), { meta: { changes: 0, last_row_id: 1 } }),

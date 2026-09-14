@@ -115,8 +115,8 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
              id, source, source_id, url, title, description, raw_text, price, currency,
              acquisition_mode, inbound_ship, lat, lon, geo_source, location_name, distance_mi,
              category, condition_raw, thumb_url, images, posted_at,
-             first_seen, last_seen, status, captured_by
-           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?)
+             first_seen, last_seen, status, captured_by, score_due_at
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?)
            ON CONFLICT (id) DO UPDATE SET
              price = COALESCE(excluded.price, listings.price),
              description = COALESCE(excluded.description, listings.description),
@@ -151,13 +151,18 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
              -- First capture keeps the credit; a later re-capture by the other
              -- person doesn't reassign who found it.
              captured_by = COALESCE(listings.captured_by, excluded.captured_by),
+             -- New listings join the scoring queue at insert. A listing swept as
+             -- gone and seen again rejoins it; anything else keeps its place.
+             score_due_at = CASE WHEN listings.status = 'gone' THEN excluded.score_due_at
+                                 ELSE listings.score_due_at END,
+             score_attempts = CASE WHEN listings.status = 'gone' THEN 0 ELSE listings.score_attempts END,
              status = 'active'`
         )
         .bind(
           n.id, n.source, n.source_id, n.url, n.title, n.description, n.raw_text,
           n.price, n.currency, n.acquisition_mode, n.inbound_ship, n.lat, n.lon,
           n.geo_source, n.location_name, n.distance_mi, n.category, n.condition_raw,
-          n.thumb_url, n.images, n.posted_at, now, now, capturedBy
+          n.thumb_url, n.images, n.posted_at, now, now, capturedBy, now
         )
     );
 

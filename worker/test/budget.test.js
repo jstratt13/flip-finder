@@ -17,7 +17,7 @@ function freePlan({ pending = [], scoresOut = [] } = {}) {
     sql,
     args,
     bind: (...a) => stmt(sql, a),
-    all: async () => (spend(), { results: /LEFT JOIN scores s/.test(sql) ? pending : [] }),
+    all: async () => (spend(), { results: /score_due_at <= ?/.test(sql) ? pending : [] }),
     first: async () => (spend(), null),
     run: async () => (spend(), { meta: { changes: 0 } }),
   });
