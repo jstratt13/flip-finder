@@ -178,13 +178,69 @@ button[disabled] { opacity: 0.55; cursor: default; }
   margin: 0;
 }
 
-.who {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+/* Account menu: the signed-in name opens Change Password and Sign Out. */
+.account { position: relative; }
+
+.account-trigger {
+  font: inherit;
   font-size: 12px;
   color: var(--muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  min-height: 34px;
+  padding: 0 8px 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
 }
+
+.account-trigger[aria-expanded='true'],
+.account-trigger:hover { border-color: var(--line); color: var(--accent); background: var(--surface); }
+.account-trigger:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
+
+/* A drawn chevron rather than a glyph, so it doesn't depend on the font. */
+.caret {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 120ms ease;
+}
+.account-trigger[aria-expanded='true'] .caret { transform: translateY(1px) rotate(-135deg); }
+
+.account-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 170px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  box-shadow: 0 6px 20px rgb(17 17 17 / 10%);
+}
+
+.account-menu button {
+  font: inherit;
+  font-size: 13px;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
+  text-align: left;
+  color: var(--accent);
+  background: none;
+  border: none;
+  border-radius: calc(var(--r) - 2px);
+  cursor: pointer;
+}
+.account-menu button:hover { background: var(--bg); }
+.account-menu button:focus-visible { outline: 2px solid var(--accent2); outline-offset: -2px; }
 
 .link {
   background: none;

@@ -9,6 +9,7 @@ import Watchlist from './components/Watchlist.jsx';
 import Calibration from './components/Calibration.jsx';
 import Detail from './components/Detail.jsx';
 import PasswordChange from './components/PasswordChange.jsx';
+import AccountMenu from './components/AccountMenu.jsx';
 
 const DEFAULT_FILTERS = {
   source: 'all',
@@ -203,15 +204,11 @@ export default function App() {
           <span className="mark" aria-hidden="true" />
           <h1>Flip Finder</h1>
         </div>
-        <div className="who">
-          <span>{user.name}</span>
-          <button type="button" className="link" onClick={() => setShowPassword(true)}>
-            Password
-          </button>
-          <button type="button" className="link" onClick={() => signOut()}>
-            Sign Out
-          </button>
-        </div>
+        <AccountMenu
+          name={user.name}
+          onChangePassword={() => setShowPassword(true)}
+          onSignOut={() => signOut()}
+        />
       </header>
 
       <nav className="views" aria-label="View">
