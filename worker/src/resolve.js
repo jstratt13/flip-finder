@@ -6,20 +6,20 @@ import { FRESHNESS } from './config.js';
 import { allIn, chunk, placeholders } from './d1.js';
 import { createMeter, metered } from './budget.js';
 
-// eBay Browse allows 5,000 calls a day and each product costs two. At one run
-// every 5 minutes and 16 products a run, that would be ~9,200 calls — so each
-// run counts the last 24 hours of lookups and stops at 4,500, leaving margin
-// for failed calls, which leave no comp row behind to be counted.
+// eBay Browse allows 5,000 calls a day and each product costs one search. At
+// one run every 5 minutes the subrequest budget alone would allow far more, so
+// each run counts the last 24 hours of lookups and stops at 4,500, leaving
+// margin for failed calls, which leave no comp row behind to be counted.
 const EBAY_DAILY_CALLS = 4500;
-const EBAY_CALLS_PER_PRODUCT = 2;
+const EBAY_CALLS_PER_PRODUCT = 1;
 const MAX_COMP_FETCHES = 40;
 
 // Subrequests each pricing step costs, used to stop before the budget runs out.
 // Comp writes ride in the final score batch, so they cost nothing here.
-// Local: the pool query. eBay: the two searches. The token is fetched once per
+// Local: the pool query. eBay: the one search. The token is fetched once per
 // run — a cache read, plus the OAuth fetch and cache write when it has expired.
 const COST_LOCAL = 1;
-const COST_EBAY = 2;
+const COST_EBAY = 1;
 const COST_EBAY_TOKEN = 3;
 
 // Listings matched and scored per run. The free plan gives a cron run 10 ms of

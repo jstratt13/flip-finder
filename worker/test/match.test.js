@@ -62,7 +62,7 @@ function fakeEnv() {
   };
 }
 
-function fakeFetch(newPrices, usedPrices) {
+function fakeFetch(newPrices, usedPrices, { conditionText = false } = {}) {
   const calls = [];
   return {
     calls,
@@ -71,19 +71,21 @@ function fakeFetch(newPrices, usedPrices) {
       if (String(url).includes('oauth2/token')) {
         return { ok: true, status: 200, json: async () => ({ access_token: 't', expires_in: 7200 }) };
       }
-      // The filter arrives percent-encoded; decode before inspecting it, and
-      // match the full clause so a query like "wh-1000xm4" can't false-positive.
-      const isNew = decodeURIComponent(String(url)).includes('conditionIds:{1000}');
-      const prices = isNew ? newPrices : usedPrices;
+      // One mixed page, as eBay returns it: each summary carries its condition.
+      const item = (p, i, id, text) => ({
+        itemId: `v1|${id}${i}|0`,
+        title: 'thing',
+        price: { value: String(p) },
+        ...(conditionText ? { condition: text } : { conditionId: id, condition: text }),
+      });
       return {
         ok: true,
         status: 200,
         json: async () => ({
-          itemSummaries: prices.map((p, i) => ({
-            itemId: `v1|${i}|0`,
-            title: 'thing',
-            price: { value: String(p) },
-          })),
+          itemSummaries: [
+            ...usedPrices.map((p, i) => item(p, i, '3000', 'Used')),
+            ...newPrices.map((p, i) => item(p, i, '1000', 'New')),
+          ],
         }),
       };
     },
@@ -139,22 +141,52 @@ test('a genuine empty result is cached, but expires sooner', async () => {
   assert.ok(ttl <= 24 * 60 * 60 * 1000, 'empty comps should use the short TTL');
 });
 
-test('one side failing still yields the other side', async () => {
+test('one search per product asks for both conditions', async () => {
+  const env = fakeEnv();
+  const f = fakeFetch([400], [200]);
+  await fetchComps(env, { product_key: 'x', query: 'x' }, f.impl);
+
+  const searches = f.calls.filter((u) => u.includes('item_summary/search'));
+  assert.equal(searches.length, 1);
+  assert.ok(decodeURIComponent(searches[0]).includes('conditionIds:{1000|3000}'));
+});
+
+test('a page of only used listings gives the used signal and no retail anchor', async () => {
+  const env = fakeEnv();
+  const f = fakeFetch([], [190, 200, 210]);
+  const comp = await fetchComps(env, { product_key: 'x', query: 'x' }, f.impl);
+  assert.equal(comp.retail_price, null);
+  assert.equal(comp.active_median, 200);
+});
+
+test('condition text is used when a summary has no condition id', async () => {
+  const env = fakeEnv();
+  const f = fakeFetch([400, 420], [200, 210], { conditionText: true });
+  const comp = await fetchComps(env, { product_key: 'x', query: 'x' }, f.impl);
+  assert.ok(comp.retail_price >= 400);
+  assert.equal(comp.n_active, 2);
+});
+
+test('conditions that were not asked for never leak into either side', async () => {
   const env = fakeEnv();
   const impl = async (url) => {
-    const s = String(url);
-    if (s.includes('oauth2/token')) {
+    if (String(url).includes('oauth2/token')) {
       return { ok: true, status: 200, json: async () => ({ access_token: 't', expires_in: 7200 }) };
     }
-    if (decodeURIComponent(s).includes('conditionIds:{1000}')) return { ok: false, status: 500 };
     return {
       ok: true,
       status: 200,
-      json: async () => ({ itemSummaries: [190, 200, 210].map((p) => ({ price: { value: String(p) } })) }),
+      json: async () => ({
+        itemSummaries: [
+          { price: { value: '999' }, conditionId: '1500', condition: 'Open box' },
+          { price: { value: '5' }, conditionId: '7000', condition: 'For parts or not working' },
+          { price: { value: '200' }, conditionId: '3000', condition: 'Used' },
+        ],
+      }),
     };
   };
-
   const comp = await fetchComps(env, { product_key: 'x', query: 'x' }, impl);
   assert.equal(comp.retail_price, null);
   assert.equal(comp.active_median, 200);
+  assert.equal(comp.n_active, 1);
 });

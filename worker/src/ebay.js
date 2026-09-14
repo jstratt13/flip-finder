@@ -59,12 +59,13 @@ export async function getToken(env, fetchImpl = fetch) {
 
 // `token` lets a caller fetch it once and reuse it: on the free plan every
 // token-cache read is a subrequest, and two per product added up.
-export async function search(env, { query, conditionId, limit = 50, token }, fetchImpl = fetch) {
+export async function search(env, { query, conditionIds, limit = 50, token }, fetchImpl = fetch) {
   token ??= await getToken(env, fetchImpl);
   const url = new URL(SEARCH_URL);
   url.searchParams.set('q', query);
   url.searchParams.set('limit', String(limit));
-  url.searchParams.set('filter', `conditionIds:{${conditionId}},buyingOptions:{FIXED_PRICE}`);
+  // eBay's filter syntax takes several values in one clause, pipe-separated.
+  url.searchParams.set('filter', `conditionIds:{${conditionIds.join('|')}},buyingOptions:{FIXED_PRICE}`);
 
   const res = await fetchImpl(url.toString(), {
     headers: {
@@ -82,32 +83,48 @@ export async function search(env, { query, conditionId, limit = 50, token }, fet
     title: it.title,
     price: Number(it.price?.value),
     condition: it.condition,
+    conditionId: it.conditionId != null ? String(it.conditionId) : null,
     url: it.itemWebUrl,
     shipping: Number(it.shippingOptions?.[0]?.shippingCost?.value ?? 0),
   }));
 }
 
-// Two calls per product: new-condition median is the retail anchor, used median
-// is the resale signal. Cached by product_key so many listings of the same item
+// Which side of the comp an item belongs to. The numeric id is authoritative;
+// the text is a fallback in case a summary arrives without one. Anything else
+// (open box, refurbished) wasn't asked for and is left out rather than guessed.
+function sideOf(item) {
+  if (item.conditionId === CONDITION.NEW) return 'new';
+  if (item.conditionId === CONDITION.USED) return 'used';
+  if (item.conditionId == null) {
+    if (/^new$/i.test(item.condition ?? '')) return 'new';
+    if (/^(used|pre-owned)$/i.test(item.condition ?? '')) return 'used';
+  }
+  return null;
+}
+
+// Results for one search. Both conditions share one page, so this is what the
+// retail anchor and the used signal are split from — the same number of items
+// the two 50-item searches used to return, which keeps JSON parsing CPU level.
+const COMP_PAGE_SIZE = 100;
+
+// One call per product: new and used listings come back in a single search and
+// are split by condition. The new-condition median is the retail anchor, the
+// used median the resale signal. This halves eBay calls against the daily
+// allowance. The trade is that one page shared between both conditions can be
+// mostly one of them; with too few new listings the retail anchor comes back
+// null and scoring falls back to the used median alone, as it always has when
+// one side was missing. Cached by product_key so many listings of the same item
 // cost one lookup.
 export async function fetchComps(env, { product_key, query, token }, fetchImpl = fetch) {
-  let newErr = null;
-  let usedErr = null;
-
-  const [newItems, usedItems] = await Promise.all([
-    search(env, { query, conditionId: CONDITION.NEW, token }, fetchImpl).catch((e) => {
-      newErr = e;
-      return [];
-    }),
-    search(env, { query, conditionId: CONDITION.USED, token }, fetchImpl).catch((e) => {
-      usedErr = e;
-      return [];
-    }),
-  ]);
-
-  // "Searched and found nothing" is a result worth caching. "Couldn't search"
-  // is not — caching that would suppress retries long after the outage ends.
-  if (newErr && usedErr) throw newErr;
+  // A failed search throws: "couldn't search" must never be cached as "found
+  // nothing", or retries would be suppressed long after an outage ends.
+  const items = await search(
+    env,
+    { query, conditionIds: [CONDITION.NEW, CONDITION.USED], limit: COMP_PAGE_SIZE, token },
+    fetchImpl
+  );
+  const newItems = items.filter((i) => sideOf(i) === 'new');
+  const usedItems = items.filter((i) => sideOf(i) === 'used');
 
   const retail = summarize(newItems.map((i) => i.price));
   const used = summarize(usedItems.map((i) => i.price));

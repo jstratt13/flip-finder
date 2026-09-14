@@ -49,7 +49,11 @@ function freePlan({ pending = [], scoresOut = [], ebayFetchedToday = 0 } = {}) {
     spend();
     const body = String(url).includes('oauth')
       ? { access_token: 't', expires_in: 7200 }
-      : { itemSummaries: [100, 120, 140, 160, 180].map((v, i) => ({ itemId: String(i), title: 'x', price: { value: v } })) };
+      : {
+          itemSummaries: [100, 120, 140, 160, 180].map((v, i) => ({
+            itemId: String(i), title: 'x', price: { value: v }, conditionId: i < 2 ? '1000' : '3000',
+          })),
+        };
     return { ok: true, status: 200, json: async () => body };
   };
 
@@ -162,19 +166,19 @@ test('a backlog of cold local pools drains too', async () => {
 });
 
 test('lookups stop at the daily eBay allowance', async () => {
-  // 2,245 products fetched in the last 24 hours is 4,490 calls of 4,500.
-  const plat = freePlan({ pending: listings(50), ebayFetchedToday: 2245 });
+  // 4,495 products fetched in the last 24 hours, one call each, of 4,500.
+  const plat = freePlan({ pending: listings(50), ebayFetchedToday: 4495 });
   const r = await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
   assert.equal(r.comp_fetches, 5);
 });
 
 test('with the eBay allowance used up, listings wait rather than back off', async () => {
-  const plat = freePlan({ pending: listings(50), ebayFetchedToday: 2250 });
+  const plat = freePlan({ pending: listings(50), ebayFetchedToday: 4500 });
   const r = await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
   assert.equal(r.comp_fetches, 0);
   // No comps were in hand, so no listing's attempt count may advance.
   const batches = [];
-  const plat2 = freePlan({ pending: listings(50), ebayFetchedToday: 2250 });
+  const plat2 = freePlan({ pending: listings(50), ebayFetchedToday: 4500 });
   const batch = plat2.env.DB.batch;
   plat2.env.DB.batch = async (stmts) => (batches.push(...stmts), batch(stmts));
   await resolvePending(plat2.env, { fetchImpl: plat2.fetchImpl });
