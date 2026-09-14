@@ -137,8 +137,16 @@ test('a genuine empty result is cached, but expires sooner', async () => {
   assert.equal(comp.active_median, null);
   assert.equal(comp.n_active, 0);
 
+  const DAY = 24 * 60 * 60 * 1000;
   const ttl = comp.expires_at - comp.fetched_at;
-  assert.ok(ttl <= 24 * 60 * 60 * 1000, 'empty comps should use the short TTL');
+  assert.equal(ttl, 3 * DAY, 'empty comps should use the short TTL');
+});
+
+test('priced comps are kept for two weeks', async () => {
+  const env = fakeEnv();
+  const f = fakeFetch([400], [200]);
+  const comp = await fetchComps(env, { product_key: 'x', query: 'x' }, f.impl);
+  assert.equal(comp.expires_at - comp.fetched_at, 14 * 24 * 60 * 60 * 1000);
 });
 
 test('one search per product asks for both conditions', async () => {

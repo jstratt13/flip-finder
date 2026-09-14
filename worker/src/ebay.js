@@ -6,8 +6,16 @@ const SCOPE = 'https://api.ebay.com/oauth/api_scope';
 
 export const CONDITION = { NEW: '1000', USED: '3000' };
 
-const COMP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const EMPTY_COMP_TTL_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// How long a product's eBay comps are trusted before another lookup. Every
+// re-lookup spends from eBay's daily allowance, so longer lifetimes leave more
+// of it for new products. The cost is staleness: fast-moving categories (phones,
+// GPUs, consoles) can shift meaningfully within two weeks.
+const COMP_TTL_MS = 14 * DAY_MS;
+// "eBay found nothing" is re-checked sooner — a product can pick up listings —
+// but not daily, since most empty results stay empty.
+const EMPTY_COMP_TTL_MS = 3 * DAY_MS;
 
 
 // Comp lookups fire two searches concurrently, so without this the first
