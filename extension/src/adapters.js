@@ -232,7 +232,11 @@ globalThis.FF_ADAPTERS.craigslist = {
     const attrs = [...document.querySelectorAll('.attrgroup, .attr')]
       .map((g) => g.innerText.trim())
       .join(' | ');
-    const condMatch = attrs.match(/condition:\s*([a-z\s-]+)/i);
+    // Stops at the end of the line or the group separator. Craigslist puts each
+    // attribute on its own line ("condition: good\nmake / manufacturer: Sharp"),
+    // and a pattern that allowed whitespace ran on into the next label, saving
+    // "good\nmake" — which condition parsing reads as unknown.
+    const condMatch = attrs.match(/condition:\s*([^\n|]+)/i);
 
     return {
       source: 'craigslist',

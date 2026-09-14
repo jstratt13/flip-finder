@@ -157,6 +157,50 @@ test('craigslist: a card with no price still yields a record', () => {
   assert.equal(r.title, 'Free cables');
 });
 
+// A Craigslist posting page reduced to what fromDetail reads. The attribute
+// text is copied from a real listing captured in production (Sept 13 2026).
+function withClPosting(attrLines, fn) {
+  const el = (text, attrs = {}) => ({ innerText: text, textContent: text, getAttribute: (k) => attrs[k] ?? null });
+  const nodes = {
+    '#titletextonly': el('Sharp 32" TV'),
+    '.price': el('$60'),
+    '#postingbody': el('Works great, remote included.'),
+  };
+  const saved = { document: globalThis.document, location: globalThis.location };
+  globalThis.location = { href: 'https://orangecounty.craigslist.org/ele/d/tv/7923752902.html' };
+  globalThis.document = {
+    body: { innerHTML: '<p class="postinginfo">post id: 7923752902</p>' },
+    querySelector: (sel) => nodes[sel] ?? null,
+    querySelectorAll: (sel) => (sel === '.attrgroup, .attr' ? attrLines.map((t) => el(t)) : []),
+  };
+  try {
+    return fn();
+  } finally {
+    globalThis.document = saved.document;
+    globalThis.location = saved.location;
+  }
+}
+
+test('craigslist detail: condition stops at the end of its line', () => {
+  const r = withClPosting(
+    ['condition: good\nmake / manufacturer: Sharp\nmodel name / number: LC-32D43U'],
+    () => CL.fromDetail()
+  );
+  // Was "good\nmake", which condition parsing reads as unknown.
+  assert.equal(r.condition_raw, 'good');
+  assert.equal(r.source_id, '7923752902');
+});
+
+test('craigslist detail: multi-word conditions survive', () => {
+  const r = withClPosting(['condition: like new\nsize / dimensions: 32 in'], () => CL.fromDetail());
+  assert.equal(r.condition_raw, 'like new');
+});
+
+test('craigslist detail: no condition attribute gives null, not a neighbour', () => {
+  const r = withClPosting(['make / manufacturer: Sharp\nmodel name / number: LC-32D43U'], () => CL.fromDetail());
+  assert.equal(r.condition_raw, null);
+});
+
 test('craigslist: a card without a pid is skipped', () => {
   assert.equal(CL.fromCard(el({ attrs: {}, children: {} })), null);
 });

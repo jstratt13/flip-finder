@@ -128,6 +128,15 @@ test('grid and detail for one listing in the same batch keep the detail conditio
   assert.equal(condition(db).band, 'like_new');
 });
 
+test('condition text from the old Craigslist adapter is trimmed to its own line', async (t) => {
+  // Exactly what production stored before the adapter fix.
+  withClock(t, T0);
+  const db = d1();
+  await ingest(db, [detail({ condition_raw: 'good\nmake', description: null })]);
+  assert.equal(row(db).condition_raw, 'good');
+  assert.equal(condition(db).band, 'good');
+});
+
 test('a listing swept as gone and seen again rejoins the scoring queue', async (t) => {
   const tick = withClock(t, T0);
   const db = d1();

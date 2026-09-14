@@ -19,6 +19,15 @@ function num(v) {
 
 // Adapters send whatever their site exposes; everything collapses to one shape
 // here so nothing downstream needs to know the origin.
+// A condition is a short phrase. Extensions running the Craigslist adapter
+// from before its fix send the next attribute along with it ("good\nmake"),
+// so only the first line is kept — which also repairs such listings the next
+// time they're captured.
+function firstLine(text) {
+  const line = String(text ?? '').split(/[\n|]/)[0].trim();
+  return line || null;
+}
+
 export function normalize(raw, origin) {
   if (!SOURCES.has(raw.source)) return { error: `unknown source: ${raw.source}` };
   if (!raw.source_id) return { error: 'missing source_id' };
@@ -64,7 +73,7 @@ export function normalize(raw, origin) {
     location_name: raw.location_name ?? null,
     distance_mi: distance,
     category: categorize(raw.title, raw.description, raw.category).category,
-    condition_raw: raw.condition_raw ?? null,
+    condition_raw: firstLine(raw.condition_raw),
     thumb_url: raw.thumb_url ?? null,
     images: raw.images ? JSON.stringify(raw.images) : null,
     posted_at: num(raw.posted_at),
