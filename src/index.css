@@ -555,9 +555,12 @@ main { padding-bottom: 20px; }
   -webkit-box-orient: vertical;
 }
 
-.figures { display: flex; gap: 16px; margin-bottom: 8px; align-items: flex-end; }
+/* Top-aligned so ASK, PROFIT and ROI labels share one line; the hand-written
+   profit is taller than its neighbours and hangs below instead of lifting its
+   label above theirs. */
+.figures { display: flex; gap: 16px; margin-bottom: 8px; align-items: flex-start; }
 
-.fig { display: flex; flex-direction: column; }
+.fig { display: flex; flex-direction: column; gap: 3px; }
 
 .fig .k {
   font-size: 10px;
