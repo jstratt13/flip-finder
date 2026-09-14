@@ -165,6 +165,30 @@ test('a backlog of cold local pools drains too', async () => {
   assert.ok(runs <= 20, `${runs} runs`);
 });
 
+test('a run prices at most 30 eBay products', async () => {
+  // Parsing each eBay page costs CPU against the free plan's 10 ms; the
+  // subrequest budget alone would allow a few more.
+  const plat = freePlan({ pending: listings(50) });
+  const r = await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
+  assert.equal(r.comp_fetches, 30);
+  assert.ok(plat.used() <= SUBREQUEST_LIMIT);
+});
+
+test('products past the per-run cap wait for the next run, not six hours', async () => {
+  const plat = freePlan({ pending: listings(50) });
+  const rescheduled = new Set();
+  const batch = plat.env.DB.batch;
+  plat.env.DB.batch = async (stmts) => {
+    for (const s of stmts) if (/UPDATE listings SET score_due_at/.test(s.sql)) rescheduled.add(s.args[2]);
+    return batch(stmts);
+  };
+  const r = await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
+  assert.equal(r.comp_fetches, 30);
+  assert.equal(r.deferred, 20);
+  // Exactly the 30 priced listings moved in the queue; the other 20 stay due.
+  assert.equal(rescheduled.size, 30);
+});
+
 test('lookups stop at the daily eBay allowance', async () => {
   // 4,495 products fetched in the last 24 hours, one call each, of 4,500.
   const plat = freePlan({ pending: listings(50), ebayFetchedToday: 4495 });

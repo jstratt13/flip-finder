@@ -110,10 +110,10 @@ function sideOf(item) {
   return null;
 }
 
-// Results for one search. Both conditions share one page, so this is what the
-// retail anchor and the used signal are split from — the same number of items
-// the two 50-item searches used to return, which keeps JSON parsing CPU level.
-const COMP_PAGE_SIZE = 100;
+// Results for one search, split into the retail anchor and the used signal.
+// Parsing the page is the largest CPU cost of pricing a product on a plan that
+// allows 10 ms per run: 100 items measured ~0.5 ms per product, 50 about half.
+const COMP_PAGE_SIZE = 50;
 
 // One call per product: new and used listings come back in a single search and
 // are split by condition. The new-condition median is the retail anchor, the

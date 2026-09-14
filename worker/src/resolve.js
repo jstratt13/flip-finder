@@ -12,7 +12,11 @@ import { createMeter, metered } from './budget.js';
 // margin for failed calls, which leave no comp row behind to be counted.
 const EBAY_DAILY_CALLS = 4500;
 const EBAY_CALLS_PER_PRODUCT = 1;
-const MAX_COMP_FETCHES = 40;
+// eBay products priced per run. Every response is parsed inside the run, and
+// parsing counts toward the free plan's 10 ms of CPU: a 50-item page measured
+// ~0.28 ms per product locally, so 30 products is ~8.3 ms before the rest of the
+// run. The subrequest budget would allow ~33. Set by Jordan at 30.
+const EBAY_PRODUCTS_PER_RUN = 30;
 
 // Subrequests each pricing step costs, used to stop before the budget runs out.
 // Comp writes ride in the final score batch, so they cost nothing here.
@@ -297,12 +301,18 @@ export async function resolvePending(
   // of cold local pools spend the budget on queries that found nothing, defer
   // every fallback, and repeat identically every run — never making progress.
   for (const key of staleKeys) {
-    const canEbay = ebayConfigured && !ebayDown && fetches < Math.min(MAX_COMP_FETCHES, ebayProductsLeft);
+    // Two different reasons a lookup can't happen, handled differently. A full
+    // run defers the product: the next run, 5 minutes away, has room. A spent
+    // daily allowance doesn't — the listing is rescheduled with the normal
+    // no-comps delay rather than re-read every 5 minutes for nothing.
+    const ebayAvailable = ebayConfigured && !ebayDown && fetches < ebayProductsLeft;
+    const runFull = fetches >= EBAY_PRODUCTS_PER_RUN;
+    const canEbay = ebayAvailable && !runFull;
     // Until this run holds a token, a lookup may also have to fetch one.
     const ebayCost = COST_EBAY + (token ? 0 : COST_EBAY_TOKEN);
     const worst = isLocalKey(key) ? COST_LOCAL + (canEbay ? ebayCost : 0) : canEbay ? ebayCost : 0;
 
-    if (worst && !meter.canSpend(worst, reserve)) {
+    if ((worst && !meter.canSpend(worst, reserve)) || (!isLocalKey(key) && ebayAvailable && runFull)) {
       deferred.add(key);
       continue;
     }
@@ -321,6 +331,7 @@ export async function resolvePending(
     }
 
     if (canEbay) await lookupEbay(key);
+    else if (ebayAvailable && runFull) deferred.add(key);
   }
 
   const conditions = await allIn(

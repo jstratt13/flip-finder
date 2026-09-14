@@ -157,6 +157,7 @@ test('one search per product asks for both conditions', async () => {
   const searches = f.calls.filter((u) => u.includes('item_summary/search'));
   assert.equal(searches.length, 1);
   assert.ok(decodeURIComponent(searches[0]).includes('conditionIds:{1000|3000}'));
+  assert.equal(new URL(searches[0]).searchParams.get('limit'), '50');
 });
 
 test('a page of only used listings gives the used signal and no retail anchor', async () => {
