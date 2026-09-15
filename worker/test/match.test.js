@@ -15,7 +15,7 @@ test('word-order variants collapse to one key', () => {
   const b = matchProduct('WH-1000XM4 Sony headphones');
   assert.equal(a.product_key, b.product_key);
   // ...but the query keeps natural order so it reads like a real search.
-  assert.equal(a.query, 'sony wh-1000xm4 headphones');
+  assert.equal(a.query, 'sony wh-1000xm4 headphone');
 });
 
 test('model years are not treated as model numbers', () => {
@@ -34,6 +34,34 @@ test('condition and sales chatter is stripped from the key', () => {
 test('vague titles score too low to reach the ranking', () => {
   assert.ok(matchProduct('Free pile of cables').match_score <= 0.3);
   assert.equal(matchProduct('   '), null);
+});
+
+// Matcher v3 (identity.js). Cases from the 360 stored listings, Sept 2026.
+test('generation numbers stay in the key; capacity and colour do not replace them', () => {
+  // v2 keyed both as "64gb-black-factory-iphone": the 13 got the 12's comps.
+  const a = matchProduct('iPhone 12 64GB Black factory unlocked');
+  const b = matchProduct('iPhone 13 64GB Black factory unlocked');
+  assert.notEqual(a.product_key, b.product_key);
+  assert.equal(matchProduct('iPhone 13 64GB Blue').product_key, b.product_key);
+  assert.notEqual(matchProduct('iPhone 13 256GB').product_key, b.product_key);
+  assert.notEqual(matchProduct('iPhone 13 Pro 64GB').product_key, b.product_key);
+});
+
+test('named products with a generation are not too vague', () => {
+  for (const t of ['Air Jordan 4 retro OG Fire Red 2020 size 10', 'Litter Robot 3', 'iPhone 7 Plus, 256 GB', 'POLK AUDIO PSW 505 12" POWERED SUBWOOFER']) {
+    assert.ok(matchProduct(t).match_score >= 0.7, t);
+  }
+});
+
+test('a size, wattage or resolution is not a model code', () => {
+  assert.equal(matchProduct('Media Streamer 4K').match_score, 0.3);
+  const onkyo = matchProduct('Monster vintage Onkyo TX-SV515Pro 80W Receiver');
+  assert.equal(onkyo.product_key, matchProduct('Onkyo TX-SV515Pro receiver').product_key);
+  assert.equal(onkyo.match_score, 0.9);
+});
+
+test('spellings of one brand share a key', () => {
+  assert.equal(matchProduct('Polk Audio PSW505 subwoofer').product_key, matchProduct('Polk PSW 505').product_key);
 });
 
 test('comp summary trims outliers before taking the median', () => {
@@ -243,4 +271,10 @@ test('without an identity every result counts, as before', async () => {
   const comp = await fetchComps(env, { product_key: 'x', query: 'x' }, f.impl);
   assert.equal(comp.filtered, 0);
   assert.equal(comp.n_relevant, comp.n_results);
+});
+
+test('a brand alone, or a brand that is an ordinary word, does not name a product', () => {
+  assert.equal(matchProduct("Women's Nike").match_score, 0.3);
+  assert.equal(matchProduct('Moving Sale! Ping Pong Table with Paddles and Net', 'furniture').brand, null);
+  assert.equal(matchProduct('Air Jordan 4 retro OG Fire Red 2020 size 10').match_score, 0.9);
 });

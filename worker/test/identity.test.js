@@ -54,3 +54,13 @@ test('long part numbers match inside cross-reference lists', () => {
 test('titles with nothing checkable judge nothing', () => {
   assert.equal(judgeResult('Wooden Foosball Table', identity('Airfryer')).relevant, null);
 });
+
+test('the first brand named is the product, not what came with it', () => {
+  assert.equal(identity('Vintage Sansui 5000A Stereo Receiver (made in Japan) + infinity Primus 250 Speak').brand, 'sansui');
+  assert.equal(identity('Vintage Sony amplifier TA-AX285, Kenwood Tuner KT-42B').brand, 'sony');
+  assert.equal(identity('Polk Audio R10 - Bookshelf Speaker').brand, 'polk audio');
+});
+
+test('a length in feet is not a generation', () => {
+  assert.deepEqual(identity("Lot of 5 New Dell 6' AC Power Cords for Computers").generations, []);
+});

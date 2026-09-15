@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolvePending, retryDelay, sweepStale } from '../src/resolve.js';
+import { matchProduct } from '../src/match.js';
 
 const HOUR = 60 * 60 * 1000;
 
@@ -53,7 +54,7 @@ test('an empty queue ends the run without writing anything', async () => {
 
 test('a scored listing leaves the queue', async () => {
   const l = listing('a', 'Sony WH-1000XM4 headphones');
-  const db = fakeDb({ pending: [l], comps: [liveComp('headphones-sony-wh-1000xm4', 400)] });
+  const db = fakeDb({ pending: [l], comps: [liveComp(matchProduct('Sony WH-1000XM4 headphones').product_key, 400)] });
   const r = await resolvePending({ DB: db }, { fetchImpl: fetch });
   assert.equal(r.scored, 1);
   assert.deepEqual(queueUpdates(db).get('a'), { due: null, attempts: 0 });
@@ -62,7 +63,7 @@ test('a scored listing leaves the queue', async () => {
 test('comps in hand but no score counts as an attempt and backs off', async () => {
   // Priced, but at $50 against a $40 median there's no profit.
   const l = listing('b', 'Sony WH-1000XM4 headphones', 1);
-  const db = fakeDb({ pending: [l], comps: [liveComp('headphones-sony-wh-1000xm4', 40)] });
+  const db = fakeDb({ pending: [l], comps: [liveComp(matchProduct('Sony WH-1000XM4 headphones').product_key, 40)] });
   const before = Date.now();
   await resolvePending({ DB: db }, { fetchImpl: fetch });
   const u = queueUpdates(db).get('b');

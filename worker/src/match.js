@@ -6,24 +6,27 @@
 // weakly matched is scored with low confidence and gated out of the ranking.
 
 import { bulkyTerm, isBulky } from './config.js';
+import { identity } from './identity.js';
 
 // Bump whenever a change here would give an existing listing a different key.
 // resolve re-matches every listing below this version, so fixes reach listings
 // that were already scored instead of only new captures.
-export const MATCHER_VERSION = 2;
+//
+// 3: keys and scores come from identity.js — its brand vocabulary, generations
+// ("iphone 12" ≠ "iphone 13"), variants, capacity; colour and sale chatter out.
+export const MATCHER_VERSION = 3;
 
-const BRANDS = new Set([
-  'apple', 'samsung', 'sony', 'lg', 'dell', 'hp', 'lenovo', 'asus', 'acer', 'msi',
-  'microsoft', 'google', 'nintendo', 'bose', 'sonos', 'jbl', 'beats', 'sennheiser',
-  'audiotechnica', 'shure', 'yamaha', 'pioneer', 'denon', 'marantz', 'klipsch',
-  'canon', 'nikon', 'fujifilm', 'gopro', 'dji', 'panasonic', 'olympus', 'leica',
-  'dyson', 'kitchenaid', 'vitamix', 'weber', 'traeger', 'milwaukee', 'dewalt',
-  'makita', 'ryobi', 'bosch', 'ridgid', 'craftsman', 'snapon', 'stihl', 'honda',
-  'peloton', 'nordictrack', 'bowflex', 'trek', 'specialized', 'cannondale', 'giant',
-  'herman', 'steelcase', 'ikea', 'wyze', 'roku', 'tcl', 'vizio', 'hisense',
-  'razer', 'logitech', 'corsair', 'steelseries', 'redragon', 'keychron', 'anker',
-  'garmin', 'fitbit', 'oculus', 'meta', 'valve', 'playstation', 'xbox',
+// Spellings of one brand that must share a key. identity.js reports the brand
+// as written, so "Polk Audio PSW505" and "Polk PSW505" name different brands
+// there; here they are the same product.
+const BRAND_KEYS = new Map([
+  ['polk audio', 'polk'], ['audio technica', 'audiotechnica'], ['audio-technica', 'audiotechnica'],
+  ['snap on', 'snapon'], ['snap-on', 'snapon'], ['tp link', 'tplink'], ['tp-link', 'tplink'],
+  ['air jordan', 'jordan'], ['dr martenz', 'drmartens'], ['dr martens', 'drmartens'],
+  ['wd', 'westerndigital'], ['western digital', 'westerndigital'], ['moto', 'motorola'],
+  ['roomba', 'irobot'], ['herman miller', 'hermanmiller'],
 ]);
+const brandKey = (brand) => (brand ? BRAND_KEYS.get(brand) ?? brand.replace(/[\s-]+/g, '') : null);
 
 // Words that describe the transaction or the condition, not the product.
 const NOISE = new Set([
@@ -57,13 +60,29 @@ function normalize(title) {
     .trim();
 }
 
-// A model number is the most identifying token available without a catalogue:
-// it mixes letters and digits (K628, WH-1000XM4, RTX3080).
-const hasLetterAndDigit = (t) => /[a-z]/.test(t) && /\d/.test(t);
-
 // "late-2013" and "2018" are model years, not model numbers. Treating them as
-// identifiers makes every item from the same year look like the same product.
-const isYearLike = (t) => /(^|-)(19|20)\d{2}$/.test(t);
+// identifiers makes every item from the same year look like the same product,
+// but the year still separates products ("late-2013 iMac" ≠ "late-2015 iMac").
+const isYearLike = (t) => /^(late|early|mid)?-?(19|20)\d{2}$/.test(t);
+
+// Brands that are also ordinary words ("Ping Pong Table", "Harvard Foosball",
+// "Coach"). Alone they don't name a product; with a model code or generation
+// they do ("Air Jordan 4", "Event PS6").
+const WORD_BRANDS = new Set([
+  'ping', 'event', 'coach', 'giant', 'victor', 'harvard', 'mesa', 'boss', 'infinity', 'realistic',
+  'shark', 'ninja', 'interstate', 'specialized', 'jordan', 'lloyd', 'wilson', 'brother', 'remington',
+  'parsec', 'rogue', 'meta', 'valve',
+]);
+
+// How sure the key is to name one product, by what the title identifies.
+// Same scale as before identity.js: a noun or loose words (0.3) can never reach
+// the confidence gate, so those listings are "too vague to price".
+const STRENGTH_SCORE = {
+  'brand+code': [0.9, 'brand+model'],
+  code: [0.7, 'model'],
+  'brand+noun': [0.55, 'brand+terms'],
+  none: [0.3, 'terms'],
+};
 
 // Bulky goods have no model numbers, so the honest comparable is a type plus
 // its distinguishing attributes: "brown leather sectional", "queen mattress".
@@ -132,63 +151,68 @@ export function matchProduct(title, category = '') {
   const norm = normalize(title);
   if (!norm) return null;
 
-  const rawTokens = norm.split(' ').filter(Boolean);
-  const tokens = rawTokens.map((t) => ALIASES.get(t) ?? t);
+  const tokens = norm.split(' ').filter(Boolean).map((t) => ALIASES.get(t) ?? t);
+  const id = identity(title);
+  const brandWords = (id.brand ?? '').split(/[\s-]+/);
 
-  const brand = tokens.find((t) => BRANDS.has(t)) ?? null;
+  // A year written into a code ("late2013") is a model year, not a model code.
+  const years = id.codes.filter(isYearLike).concat(id.attributes.filter((a) => /^(19|20)\d{2}$/.test(a)));
+  const codes = id.codes.filter((c) => !isYearLike(c));
+  const specific = codes.length > 0 || id.generations.length > 0;
+  const brand = WORD_BRANDS.has(id.brand) && !specific ? null : brandKey(id.brand);
 
   if (isBulky(norm, category)) {
     const bulky = matchBulky(tokens, brand, bulkyTerm(norm, category));
     if (bulky) return bulky;
   }
 
-  const modelTokens = tokens.filter(
-    (t) => t !== brand && hasLetterAndDigit(t) && !isYearLike(t) && t.length >= 2
-  );
+  // "Litter Robot 3" and "Bose 301": the brand is already in the key, so the
+  // generation is its number alone — "Dr Martens 1460" and "Dr.Martenz 1460"
+  // then agree.
+  const generations = id.generations.map((g) => {
+    const [w, n] = g.split(' ');
+    return brandWords.includes(w) ? n : w + n;
+  });
 
-  const content = tokens.filter(
-    (t) => t !== brand && !NOISE.has(t) && !modelTokens.includes(t) && t.length > 2
-  );
-
-  // Bare numbers only mean something next to a product name ("ipad mini 6").
-  const numeric = rawTokens.filter((t) => /^\d{1,4}$/.test(t) && content.length);
-
+  // The key names the product and the variants that set its price — iPhone 13
+  // Pro 256GB is not iPhone 13 128GB — and nothing that doesn't: colour,
+  // condition, sale chatter, the noun the seller happened to use. Without a
+  // code or generation, the title's describing words are all there is.
+  const capacity = id.attributes.filter((a) => /^\d+(gb|tb)$/.test(a)).slice(0, 1);
+  const describing = specific
+    ? []
+    : id.query.split(' ').filter((w) => w && !brandWords.includes(w) && !id.variants.includes(w) && !capacity.includes(w));
   const kept = new Set([
     ...(brand ? [brand] : []),
-    ...modelTokens.slice(0, 2),
-    ...content.slice(0, 3),
-    ...(modelTokens.length ? [] : numeric.slice(0, 1)),
+    ...codes.slice(0, 2),
+    ...generations.slice(0, 1),
+    ...id.variants,
+    ...capacity,
+    ...years.slice(0, 1),
+    // A code with no brand ("M200 speakers") needs its noun to not collide
+    // with every other maker's M200. A generation names its own line.
+    ...(codes.length && !id.generations.length && !brand ? id.nouns.slice(0, 1) : []),
+    ...describing.slice(0, 3),
   ]);
 
   if (!kept.size) return null;
 
-  // Key is sorted so word-order variants of the same item collapse together;
-  // the query keeps title order because that is what reads as a real search.
-  const keyParts = [...kept].sort();
-  const query = [...new Set(tokens.filter((t) => kept.has(t)))].join(' ');
-
-  let score;
-  let method;
-  if (brand && modelTokens.length) {
-    score = 0.9;
-    method = 'brand+model';
-  } else if (modelTokens.length) {
-    score = 0.7;
-    method = 'model';
-  } else if (brand && content.length) {
-    score = 0.55;
-    method = 'brand+terms';
-  } else {
-    score = 0.3;
-    method = 'terms';
-  }
+  // A brand with nothing else ("Women's Nike") is every product it makes.
+  const strength = specific
+    ? (brand ? 'brand+code' : 'code')
+    : brand && describing.length
+      ? 'brand+noun'
+      : 'none';
+  const [score, method] = STRENGTH_SCORE[strength];
 
   return {
-    product_key: keyParts.join('-'),
+    // Sorted so word-order variants of the same item collapse together.
+    product_key: [...kept].sort().join('-'),
     brand,
-    model: modelTokens.slice(0, 2).join(' ') || null,
+    model: [...codes.slice(0, 2), ...generations.slice(0, 1)].join(' ') || null,
     match_score: score,
     method,
-    query,
+    // What eBay is searched for; resolve builds the same from identity().
+    query: id.query || [...kept].join(' '),
   };
 }

@@ -94,6 +94,8 @@ export function normalize(title) {
     // 14" and 14” are sizes: keep them attached so they read as inches, not a
     // generation ("Chromebook 14").
     .replace(/(\d)\s*("|”|''|inch(es)?\b)/g, '$1in ')
+    // 6' is feet, not a generation ("Dell 6' power cords").
+    .replace(/(\d)['’](?![a-z])/g, '$1ft ')
     .replace(/[’'`]/g, '')
     // "Dr.Martens" is two words; "4.5" is one number.
     .replace(/([a-z])\.(?=[a-z])/g, '$1 ')
@@ -129,15 +131,20 @@ function tokensOf(normalized) {
 const hasLetter = (s) => /[a-z]/.test(s);
 const hasDigit = (s) => /\d/.test(s);
 
+// The first brand named is the product; later ones are what came with it
+// ("Sansui 5000A Receiver + Infinity Primus 250 Speakers"). At the same spot the
+// longest wins, so "Polk Audio" beats "Polk".
+const BRANDS = new Map(BRAND_LIST.map((b) => [b.replace(/-/g, ' '), b]));
+const BRAND_MAX_WORDS = Math.max(...[...BRANDS.keys()].map((b) => b.split(' ').length));
 function findBrand(norm) {
-  const padded = ` ${norm.replace(/[-/]/g, ' ')} `;
-  let best = null;
-  for (const b of BRAND_LIST) {
-    const needle = ` ${b.replace(/-/g, ' ')} `;
-    const at = padded.indexOf(needle);
-    if (at !== -1 && (!best || b.length > best.brand.length)) best = { brand: b, at };
+  const words = norm.replace(/[-/]/g, ' ').split(' ').filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    for (let n = Math.min(BRAND_MAX_WORDS, words.length - i); n >= 1; n--) {
+      const b = BRANDS.get(n === 1 ? words[i] : words.slice(i, i + n).join(' '));
+      if (b) return b;
+    }
   }
-  return best?.brand ?? null;
+  return null;
 }
 
 // What makes this listing this product.
