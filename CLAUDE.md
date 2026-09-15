@@ -8,7 +8,7 @@ buying and records what was bought and sold.
 
 This file holds what doesn't change often: rules, architecture, how to work here.
 **Current status, open decisions and outstanding work live in the handoff page:**
-https://claude.ai/code/artifact/cb9a75be-c7a2-4dd8-a933-11bc2447dae5 — read it first.
+https://claude.ai/artifact/S9E3zJQvturGPAC1WEj7cY — read it first.
 
 ## Live
 
