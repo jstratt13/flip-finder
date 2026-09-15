@@ -12,3 +12,6 @@ dist/
 .env
 .env.*
 !.env.example
+
+# One-off research data (eBay listing samples); never committed — the repo is public.
+research/
