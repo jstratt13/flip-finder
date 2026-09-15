@@ -54,7 +54,7 @@ const NOISE = new Set([
 const COLOURS = new Set([
   'black', 'white', 'silver', 'gray', 'grey', 'blue', 'red', 'green', 'gold', 'rose', 'pink', 'purple',
   'yellow', 'orange', 'brown', 'tan', 'beige', 'midnight', 'starlight', 'graphite', 'space', 'navy',
-  'titanium', 'metallic', 'metalic', 'chrome', 'matte', 'glossy', 'piano',
+  'metallic', 'metalic', 'chrome', 'matte', 'glossy', 'piano',
 ]);
 const ATTRIBUTE_RE = /^\d+(\.\d+)?(gb|tb|mb|w|watt|watts|v|volt|mah|ah|in|inch|inches|mm|cm|ft|hz|khz|ohm|ohms|lb|lbs|oz|qt|g|k|x|hours|hour|hrs|hr|pack|pk|pc|pcs|ct|count|ch|channel)$/;
 const YEAR_RE = /^(19|20)\d{2}$/;
@@ -190,13 +190,26 @@ export function identity(title) {
   }
 
   const specific = Boolean(codes.length || generations.length);
+  // Capacity sets the price of storage and phones (3TB vs 1TB, 128GB vs 512GB),
+  // so it stays in the search even though it isn't identity.
+  const capacity = attributes.filter((a) => /^\d+(gb|tb)$/.test(a)).slice(0, 1);
+  // Without a code or generation, the brand alone searches far too wide
+  // ("moto", "gucci"). Keep the title's other descriptive words, minus chatter.
+  const describing = specific
+    ? []
+    : toks
+        .filter((p) => !p.joined)
+        .map((p) => p.t)
+        .filter((t) => !brandWords.has(t) && !NOISE.has(t) && !COLOURS.has(t) && hasLetter(t) && t.length >= 2 && !ATTRIBUTE_RE.test(t))
+        .slice(0, 4);
   const queryParts = [
     ...(brand ? [brand] : []),
     ...lines.slice(0, 1),
     ...codes.slice(0, 2).map((c) => plain.find((p) => p.t === c)?.raw ?? c),
     ...generations.slice(0, 1),
     ...variants,
-    ...nouns.slice(0, specific ? 1 : 2),
+    ...(specific ? nouns.slice(0, 1) : describing),
+    ...capacity,
   ];
   const query = [...new Set(queryParts.join(' ').split(' '))].join(' ').trim();
 

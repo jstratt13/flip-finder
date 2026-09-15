@@ -35,6 +35,9 @@ export const SPREAD = {
   // Used asking prices for one product when too few comps to measure. From the
   // eBay sample: median half-IQR of relevant results was 16%, of all 29%.
   default_item: 0.3,
+  // How many comparables the typical spread counts as: a sample of 8 is trusted
+  // half and half, 24 is trusted three to one.
+  spread_prior_weight: 8,
   // Once condition is read, less of the comp spread applies to this item.
   known_condition_factor: 0.6,
   min_item: 0.08,
@@ -75,8 +78,14 @@ export function confidence({ strength, comps, band }) {
 
   if (!comps || !(comps.median > 0)) return { confidence: 0, pRight, pWithin: 0, sigma: null, parts };
 
+  // A spread measured from a handful of prices is itself a guess: three comps
+  // at $30, $30 and $40 look tight until a fourth at $76 arrives (Sangean WFR-20,
+  // second eBay sample). So the measured spread is shrunk toward the typical one,
+  // weighted by how many prices back it — it only earns full trust at scale.
   const measured = comps.n >= 3 && comps.p25 > 0 && comps.p75 > comps.p25;
-  const itemSd = measured ? Math.log(comps.p75 / comps.p25) / 1.349 : SPREAD.default_item;
+  const observedSd = measured ? Math.log(comps.p75 / comps.p25) / 1.349 : SPREAD.default_item;
+  const w = measured ? comps.n / (comps.n + SPREAD.spread_prior_weight) : 0;
+  const itemSd = Math.sqrt(w * observedSd ** 2 + (1 - w) * SPREAD.default_item ** 2);
   const cond = conditionSpread(band);
   const known = band && band !== 'unknown';
 
