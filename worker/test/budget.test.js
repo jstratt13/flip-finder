@@ -78,9 +78,8 @@ test('a run with a large eBay backlog stays inside the free-plan limit', async (
   const r = await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
 
   assert.ok(plat.used() <= SUBREQUEST_LIMIT, `${plat.used()} subrequests`);
-  // 16 once the token is read once per run and comps ride in the score batch;
-  // 6 before. A regression here halves how fast the backlog drains.
-  assert.ok(r.comp_fetches >= 16, `only ${r.comp_fetches} products priced in a run`);
+  // The per-run cap (7), not the subrequest budget, is what stops pricing.
+  assert.equal(r.comp_fetches, 7);
   assert.ok(r.deferred > 0, 'the rest waits for the next run');
   // The meter's own count agrees with the platform's.
   assert.equal(r.subrequests, plat.used());
@@ -165,12 +164,12 @@ test('a backlog of cold local pools drains too', async () => {
   assert.ok(runs <= 20, `${runs} runs`);
 });
 
-test('a run prices at most 30 eBay products', async () => {
+test('a run prices at most 7 eBay products', async () => {
   // Parsing each eBay page costs CPU against the free plan's 10 ms; the
   // subrequest budget alone would allow a few more.
   const plat = freePlan({ pending: listings(50) });
   const r = await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
-  assert.equal(r.comp_fetches, 30);
+  assert.equal(r.comp_fetches, 7);
   assert.ok(plat.used() <= SUBREQUEST_LIMIT);
 });
 
@@ -183,10 +182,10 @@ test('products past the per-run cap wait for the next run, not six hours', async
     return batch(stmts);
   };
   const r = await resolvePending(plat.env, { fetchImpl: plat.fetchImpl });
-  assert.equal(r.comp_fetches, 30);
-  assert.equal(r.deferred, 20);
-  // Exactly the 30 priced listings moved in the queue; the other 20 stay due.
-  assert.equal(rescheduled.size, 30);
+  assert.equal(r.comp_fetches, 7);
+  assert.equal(r.deferred, 43);
+  // Exactly the 7 priced listings moved in the queue; the other 43 stay due.
+  assert.equal(rescheduled.size, 7);
 });
 
 test('lookups stop at the daily eBay allowance', async () => {

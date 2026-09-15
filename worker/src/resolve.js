@@ -13,10 +13,11 @@ import { createMeter, metered } from './budget.js';
 const EBAY_DAILY_CALLS = 4500;
 const EBAY_CALLS_PER_PRODUCT = 1;
 // eBay products priced per run. Every response is parsed inside the run, and
-// parsing counts toward the free plan's 10 ms of CPU: a 50-item page measured
-// ~0.28 ms per product locally, so 30 products is ~8.3 ms before the rest of the
-// run. The subrequest budget would allow ~33. Set by Jordan at 30.
-const EBAY_PRODUCTS_PER_RUN = 30;
+// parsing counts toward the free plan's 10 ms of CPU. The first production run
+// at 30 products used 59 ms (Sept 14 2026) — real eBay pages parse far slower
+// than the local estimate — so Jordan set 7. At 288 runs a day that's still
+// ~2,000 products, under eBay's daily allowance. Watch cpuTime in wrangler tail.
+const EBAY_PRODUCTS_PER_RUN = 7;
 
 // Subrequests each pricing step costs, used to stop before the budget runs out.
 // Comp writes ride in the final score batch, so they cost nothing here.
@@ -29,8 +30,7 @@ const COST_EBAY_TOKEN = 3;
 // Listings matched and scored per run. The free plan gives a cron run 10 ms of
 // CPU and production runs measured 17–31 ms, most of it a fixed cold-start
 // cost; each listing adds ~0.05 ms, so 50 instead of 100 saves ~2 ms. Pricing
-// is capped at 16 products a run by the subrequest budget, which 50 listings
-// comfortably feeds.
+// is capped at EBAY_PRODUCTS_PER_RUN, which 50 listings comfortably feeds.
 const DEFAULT_LIMIT = 50;
 
 const HOUR = 60 * 60 * 1000;
