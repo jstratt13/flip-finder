@@ -14,6 +14,7 @@ const REASON_ORDER = [
   'low_roi',
   'no_margin',
   'no_match',
+  'too_vague',
   'no_price',
   'acquired',
   'gone',
@@ -27,6 +28,8 @@ const REASON_COPY = {
   low_roi: 'Below ROI floor',
   no_margin: 'No margin',
   no_match: 'No product match',
+  // Matched on generic words only; even perfect comparables couldn't make it rank.
+  too_vague: 'Too vague to price',
   no_price: 'No price',
   acquired: 'Bought',
   gone: 'No longer listed',
@@ -38,6 +41,7 @@ const REASON_COPY = {
 const REASON_TONE = {
   ranking: 'ok',
   no_match: 'warn',
+  too_vague: 'warn',
   no_price: 'warn',
   no_comps: 'info',
 };

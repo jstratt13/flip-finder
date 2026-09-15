@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { capturedListings, rankingReason, REASON_CODES } from '../src/captured.js';
-import { SCORING } from '../src/config.js';
+import { SCORING, VAGUE_MATCH_BELOW } from '../src/config.js';
+
+// The gates the worker binds: the scoring gates plus the too-vague bound.
+const GATES = { ...SCORING, vague_match_below: VAGUE_MATCH_BELOW };
 
 // Real SQL against the real migrations: the reason is now computed in the query
 // so the dashboard can filter and tally everything captured, and it has to
@@ -45,8 +48,8 @@ function seed(db, reason, { source = 'craigslist', title = `Item ${seq}`, seenAt
   if (['acquired', 'gone', 'no_price', 'no_match'].includes(reason)) return id;
 
   const key = `key-${seq}`;
-  run(`INSERT INTO listing_matches (listing_id, product_key, match_score, method, matched_at) VALUES (?,?,?,?,?)`, id, key, 0.9, 'test', at);
-  if (reason === 'no_comps') return id;
+  run(`INSERT INTO listing_matches (listing_id, product_key, match_score, method, matched_at) VALUES (?,?,?,?,?)`, id, key, reason === 'too_vague' ? 0.3 : 0.9, 'test', at);
+  if (reason === 'no_comps' || reason === 'too_vague') return id;
 
   // Retail only, no used median: still counts as having comps.
   run(`INSERT INTO comps (product_key, retail_price, active_median, n_active, source, fetched_at, expires_at) VALUES (?,?,?,?,?,?,?)`,
@@ -68,15 +71,15 @@ test('the SQL reason agrees with rankingReason on every branch', async () => {
   const db = d1();
   for (const code of REASON_CODES) seed(db, code);
 
-  const { listings } = await capturedListings(db, { gates: SCORING });
+  const { listings } = await capturedListings(db, { gates: GATES });
   assert.equal(listings.length, REASON_CODES.length);
 
   // Every row: the reason the query filtered on is the reason the label says.
   for (const code of REASON_CODES) {
-    const page = await capturedListings(db, { reason: code, gates: SCORING });
+    const page = await capturedListings(db, { reason: code, gates: GATES });
     assert.equal(page.count, 1, `${code}: expected exactly one row`);
     assert.equal(page.listings[0].reason.code, code);
-    assert.equal(rankingReason(page.listings[0], SCORING).code, code);
+    assert.equal(rankingReason(page.listings[0], GATES).code, code);
   }
 });
 
@@ -85,7 +88,7 @@ test('tallies count everything captured, not just the page', async () => {
   for (let i = 0; i < 5; i++) seed(db, 'no_comps');
   for (let i = 0; i < 3; i++) seed(db, 'ranking');
 
-  const r = await capturedListings(db, { limit: 2, gates: SCORING });
+  const r = await capturedListings(db, { limit: 2, gates: GATES });
   assert.equal(r.count, 2);
   assert.equal(r.total, 8);
   assert.deepEqual(r.summary, { no_comps: 5, ranking: 3 });
@@ -97,7 +100,7 @@ test('filtering by reason returns only that reason, newest first', async () => {
   seed(db, 'ranking');
   const newer = seed(db, 'no_match');
 
-  const r = await capturedListings(db, { reason: 'no_match', gates: SCORING });
+  const r = await capturedListings(db, { reason: 'no_match', gates: GATES });
   assert.deepEqual(r.listings.map((l) => l.id), [newer, older]);
   assert.equal(r.matching, 2);
   assert.equal(r.reason, 'no_match');
@@ -107,7 +110,7 @@ test('a filtered page keeps every reason in the tallies to switch to', async () 
   const db = d1();
   seed(db, 'no_match');
   seed(db, 'ranking');
-  const r = await capturedListings(db, { reason: 'ranking', gates: SCORING });
+  const r = await capturedListings(db, { reason: 'ranking', gates: GATES });
   assert.deepEqual(r.summary, { no_match: 1, ranking: 1 });
 });
 
@@ -117,7 +120,7 @@ test('the filter combines with source and search', async () => {
   seed(db, 'no_comps', { source: 'craigslist', title: 'Aeron chair' });
   seed(db, 'no_comps', { source: 'facebook', title: 'Leap chair' });
 
-  const r = await capturedListings(db, { source: 'facebook', q: 'aeron', reason: 'no_comps', gates: SCORING });
+  const r = await capturedListings(db, { source: 'facebook', q: 'aeron', reason: 'no_comps', gates: GATES });
   assert.equal(r.count, 1);
   assert.equal(r.listings[0].source, 'facebook');
   assert.equal(r.total, 1);
@@ -126,7 +129,7 @@ test('the filter combines with source and search', async () => {
 test('an unknown reason is ignored rather than returning nothing', async () => {
   const db = d1();
   seed(db, 'ranking');
-  const r = await capturedListings(db, { reason: "x' OR 1=1 --", gates: SCORING });
+  const r = await capturedListings(db, { reason: "x' OR 1=1 --", gates: GATES });
   assert.equal(r.count, 1);
   assert.equal(r.reason, null);
 });
@@ -135,7 +138,7 @@ test('the gates bound into the SQL are the ones passed in', async () => {
   // A listing at $60 profit is low_profit if the floor is raised to $100.
   const db = d1();
   seed(db, 'ranking');
-  const r = await capturedListings(db, { reason: 'low_profit', gates: { ...SCORING, min_profit: 100 } });
+  const r = await capturedListings(db, { reason: 'low_profit', gates: { ...GATES, min_profit: 100 } });
   assert.equal(r.count, 1);
   assert.equal(r.listings[0].reason.code, 'low_profit');
 });
@@ -144,7 +147,7 @@ async function allPages(db, opts) {
   const pages = [];
   let cursor = null;
   do {
-    const r = await capturedListings(db, { ...opts, cursor, tallies: !cursor, gates: SCORING });
+    const r = await capturedListings(db, { ...opts, cursor, tallies: !cursor, gates: GATES });
     pages.push(r);
     cursor = r.next_cursor;
   } while (cursor && pages.length < 50);
@@ -192,11 +195,11 @@ test('later pages skip the tallies query entirely', async () => {
   const batch = db.batch;
   db.batch = async (stmts) => ((statements += stmts.length), batch(stmts));
 
-  const first = await capturedListings(db, { gates: SCORING });
+  const first = await capturedListings(db, { gates: GATES });
   assert.equal(statements, 2);
   assert.equal(first.total, 60);
 
-  const second = await capturedListings(db, { cursor: first.next_cursor, tallies: false, gates: SCORING });
+  const second = await capturedListings(db, { cursor: first.next_cursor, tallies: false, gates: GATES });
   assert.equal(statements, 3, 'second page ran one statement');
   assert.equal(second.summary, undefined);
   assert.equal(second.count, 10);
@@ -206,7 +209,20 @@ test('a malformed cursor falls back to the first page', async () => {
   const db = d1();
   for (let i = 0; i < 3; i++) seed(db, 'no_comps');
   for (const cursor of ['garbage', '12:', ':id', "1' OR 1=1 --"]) {
-    const r = await capturedListings(db, { cursor, gates: SCORING });
+    const r = await capturedListings(db, { cursor, gates: GATES });
     assert.equal(r.count, 3, cursor);
   }
+});
+
+test('a generic-word match is too vague to price, even with comps and a score', async () => {
+  const db = d1();
+  const id = seed(db, 'ranking');
+  db.raw.prepare('UPDATE listing_matches SET match_score = 0.3 WHERE listing_id = ?').run(id);
+  const r = await capturedListings(db, { gates: GATES });
+  assert.equal(r.listings[0].reason.code, 'too_vague');
+  assert.deepEqual(r.summary, { too_vague: 1 });
+});
+
+test('the too-vague bound sits between generic-word and brand-word matches', () => {
+  assert.ok(VAGUE_MATCH_BELOW > 0.3 && VAGUE_MATCH_BELOW < 0.5, String(VAGUE_MATCH_BELOW));
 });

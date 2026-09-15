@@ -105,3 +105,26 @@ test('sweeping a listing as gone also removes it from the queue', async () => {
   await sweepStale(db);
   assert.match(sql, /score_due_at = NULL/);
 });
+
+test('a too-vague listing leaves the queue without an eBay lookup', async () => {
+  // "Street co" matches on generic words only (0.30): even perfect comparables
+  // couldn't lift it over the confidence gate, so pricing it spends a call for
+  // nothing. The brand+model listing in the same run is still priced.
+  const env = { EBAY_CLIENT_ID: 'x', EBAY_CLIENT_SECRET: 'y' };
+  const db = fakeDb({ pending: [listing('v', 'Street co'), listing('s', 'Sony WH-1000XM4 headphones')] });
+  const searched = [];
+  const fetchImpl = async (url) => {
+    const u = String(url);
+    if (u.includes('oauth')) return { ok: true, status: 200, json: async () => ({ access_token: 't', expires_in: 7200 }) };
+    searched.push(new URL(u).searchParams.get('q'));
+    return { ok: true, status: 200, json: async () => ({ itemSummaries: [] }) };
+  };
+  await resolvePending({ ...env, DB: db }, { fetchImpl });
+
+  assert.deepEqual(searched, ['sony wh-1000xm4 headphones']);
+  const dequeued = db.batches
+    .flat()
+    .filter((s) => /score_due_at = NULL/.test(s.sql))
+    .map((s) => s.args[0]);
+  assert.deepEqual(dequeued, ['v']);
+});

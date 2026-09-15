@@ -215,3 +215,14 @@ test('a stored listing re-captured above $1,000 keeps its last in-range record',
   assert.equal(r.accepted, 0);
   assert.equal(row(db).price, 900);
 });
+
+test('whole vehicles are refused at ingest; their parts are not', async (t) => {
+  withClock(t, T0);
+  const db = d1();
+  const r = await ingestBatch(db, [
+    grid({ source_id: 'truck', title: '1992 Dodge Ram 50 · Short Bed', price: 750 }),
+    grid({ source_id: 'battery', title: 'Interstate Group 24F Car Battery', price: 50 }),
+  ]);
+  assert.deepEqual(stored(db), ['craigslist:battery']);
+  assert.match(r.rejected[0].error, /^vehicle/);
+});

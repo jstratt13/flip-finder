@@ -99,7 +99,7 @@ function fakeDb(outdated) {
 test('rematch moves a misfiled accessory and reprices both pools', async () => {
   const db = fakeDb([
     { id: 'cover', title: 'Weber grill cover', category: '', old_key: 'local:grill-weber' },
-    { id: 'grill', title: 'Weber grill', category: '', old_key: 'local:grill-weber' },
+    { id: 'grill', title: 'Weber grill', category: '', old_key: 'local:grill-weber', old_score: 0.65 },
   ]);
 
   const r = await rematchOutdated(db, { now: 1 });

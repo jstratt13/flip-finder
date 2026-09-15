@@ -10,6 +10,9 @@ export function rankingReason(r, gates) {
   if (r.status !== 'active') return { code: 'gone', label: 'No longer listed' };
   if (r.price == null) return { code: 'no_price', label: 'No price' };
   if (!r.product_key) return { code: 'no_match', label: 'No product match' };
+  if (r.match_score != null && r.match_score < gates.vague_match_below) {
+    return { code: 'too_vague', label: 'Too vague to price' };
+  }
   if (r.active_median == null && r.retail_price == null) {
     return { code: 'no_comps', label: 'Awaiting comps' };
   }
@@ -29,7 +32,7 @@ export function rankingReason(r, gates) {
 }
 
 export const REASON_CODES = [
-  'acquired', 'gone', 'no_price', 'no_match', 'no_comps',
+  'acquired', 'gone', 'no_price', 'no_match', 'too_vague', 'no_comps',
   'no_margin', 'low_profit', 'low_confidence', 'low_roi', 'ranking',
 ];
 
@@ -37,13 +40,14 @@ export const REASON_CODES = [
 // page returns the latest 200 listings, so tallying or filtering in JavaScript
 // only ever described those 200, not everything captured. The two must agree
 // branch for branch — test/captured.test.js runs both over the same rows.
-// Binds three gates, in order: min_profit, min_confidence, min_roi.
+// Binds four values, in order: vague_match_below, min_profit, min_confidence, min_roi.
 const REASON_SQL = `
   CASE
     WHEN EXISTS (SELECT 1 FROM acquisitions a WHERE a.listing_id = l.id) THEN 'acquired'
     WHEN l.status IS NOT 'active' THEN 'gone'
     WHEN l.price IS NULL THEN 'no_price'
     WHEN m.product_key IS NULL OR m.product_key = '' THEN 'no_match'
+    WHEN m.match_score < ? THEN 'too_vague'
     WHEN cp.active_median IS NULL AND cp.retail_price IS NULL THEN 'no_comps'
     WHEN s.score IS NULL THEN 'no_margin'
     WHEN s.profit < ? THEN 'low_profit'
@@ -96,7 +100,7 @@ export async function capturedListings(
     binds.push(`%${term}%`, `%${term}%`);
   }
 
-  const gateBinds = [gates.min_profit, gates.min_confidence, gates.min_roi];
+  const gateBinds = [gates.vague_match_below, gates.min_profit, gates.min_confidence, gates.min_roi];
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   const filtered = REASON_CODES.includes(reason);

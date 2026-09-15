@@ -226,6 +226,21 @@ export function confidenceFor({ matchScore, nComps, conditionConfidence }) {
   return Math.exp(logSum / totalWeight);
 }
 
+// A listing is too vague to price when its match alone keeps it under the
+// confidence gate, even with every comparable wanted and a perfectly read
+// condition. With the geometric mean that bound is exact: the match term must
+// satisfy match^(w_match / W) >= gate, so match >= gate^(W / w_match). With
+// today's equal weights and a 0.70 gate that is 0.343 — generic-word matches
+// (0.30) can never rank, so they aren't priced at all. Recomputed from the
+// weights and gate, so it moves if either does.
+export const VAGUE_MATCH_BELOW = (() => {
+  const w = CONFIDENCE.match_weight;
+  const total = CONFIDENCE.match_weight + CONFIDENCE.comp_depth_weight + CONFIDENCE.condition_weight;
+  return Math.pow(SCORING.min_confidence, total / w);
+})();
+
+export const isTooVague = (matchScore) => matchScore != null && matchScore < VAGUE_MATCH_BELOW;
+
 export function shippingFor(price) {
   const band = SHIPPING.bands.find((b) => price <= b.max);
   return band ? band.cost : SHIPPING.default_outbound;

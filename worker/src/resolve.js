@@ -2,7 +2,7 @@ import { matchProduct, MATCHER_VERSION } from './match.js';
 import { fetchComps, getToken } from './ebay.js';
 import { fetchLocalComps } from './localcomps.js';
 import { scoreListing } from './score.js';
-import { FRESHNESS } from './config.js';
+import { FRESHNESS, isTooVague } from './config.js';
 import { allIn, chunk, placeholders } from './d1.js';
 import { createMeter, metered } from './budget.js';
 
@@ -94,7 +94,7 @@ const UPSERT_MATCH_SQL = `INSERT INTO listing_matches
 export async function rematchOutdated(db, { limit = 200, now = Date.now() } = {}) {
   const { results: outdated } = await db
     .prepare(
-      `SELECT l.id, l.title, l.category, m.product_key AS old_key
+      `SELECT l.id, l.title, l.category, m.product_key AS old_key, m.match_score AS old_score
        FROM listing_matches m
        JOIN listings l ON l.id = m.listing_id
        WHERE m.matcher_version < ? AND l.status = 'active'
@@ -113,7 +113,9 @@ export async function rematchOutdated(db, { limit = 200, now = Date.now() } = {}
     const m = matchProduct(l.title, l.category ?? '');
     const newKey = m?.product_key ?? null;
 
-    if (newKey !== l.old_key) {
+    // A sharper match on the same key still needs rescoring: it may no longer
+    // be too vague to price.
+    if (newKey !== l.old_key || (m && m.match_score !== l.old_score)) {
       changedIds.push(l.id);
       if (l.old_key.startsWith('local:')) touchedLocal.add(l.old_key);
       if (newKey?.startsWith('local:')) touchedLocal.add(newKey);
@@ -300,7 +302,14 @@ export async function resolvePending(
   // fits the budget. Pricing pools first and eBay fallbacks later let a backlog
   // of cold local pools spend the budget on queries that found nothing, defer
   // every fallback, and repeat identically every run — never making progress.
-  for (const key of staleKeys) {
+  // A product is only worth a lookup if at least one listing matched to it
+  // could rank. Generic-word matches can't, so they'd spend an eBay call for a
+  // price that changes nothing.
+  const worthPricing = new Set(
+    [...matches.values()].filter((m) => !isTooVague(m.match_score)).map((m) => m.product_key)
+  );
+
+  for (const key of staleKeys.filter((k) => worthPricing.has(k))) {
     // Two different reasons a lookup can't happen, handled differently. A full
     // run defers the product: the next run, 5 minutes away, has room. A spent
     // daily allowance doesn't — the listing is rescheduled with the normal
@@ -357,6 +366,14 @@ export async function resolvePending(
     if (!match) {
       // Nothing to price against. Used to be retried on every single run.
       scoreStmts.push(schedule(listing, { done: false, attempted: true }));
+      continue;
+    }
+    // Too vague to price: leaves the queue. Captured shows why. A matcher
+    // change that sharpens the match requeues it (rematchOutdated).
+    if (isTooVague(match.match_score)) {
+      scoreStmts.push(
+        db.prepare('UPDATE listings SET score_due_at = NULL, score_attempts = 0 WHERE id = ?').bind(listing.id)
+      );
       continue;
     }
     // Left due: the next run picks it up.

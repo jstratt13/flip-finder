@@ -3,6 +3,7 @@ import { assessCondition } from './condition.js';
 import { categorize } from './categorize.js';
 import { coordsForCity } from './cities.js';
 import { allIn } from './d1.js';
+import { vehicleReason } from './vehicles.js';
 
 // An unchanged re-capture still refreshes last_seen, but no more than this
 // often. Staleness is judged in days (7 to flag, 30 to sweep), so an hour of
@@ -32,6 +33,9 @@ export function normalize(raw, origin) {
   if (!SOURCES.has(raw.source)) return { error: `unknown source: ${raw.source}` };
   if (!raw.source_id) return { error: 'missing source_id' };
   if (!raw.title) return { error: 'missing title' };
+  // Whole vehicles are out of scope; see vehicles.js for what counts.
+  const vehicle = vehicleReason(raw.title, raw.category);
+  if (vehicle) return { error: `vehicle (${vehicle})` };
 
   const price = num(raw.price);
   const mode = raw.acquisition_mode === 'shipped' ? 'shipped' : 'pickup';
