@@ -13,5 +13,7 @@ dist/
 .env.*
 !.env.example
 
-# One-off research data (eBay listing samples); never committed — the repo is public.
-research/
+# Research data stays local: eBay listing samples and anything derived from them
+# (result titles, judged samples). The repo is public; the scripts are tracked.
+research/ebay-sample-*/
+research/out/
