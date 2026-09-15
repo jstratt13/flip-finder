@@ -2,7 +2,9 @@ import { matchProduct, MATCHER_VERSION } from './match.js';
 import { fetchComps, getToken } from './ebay.js';
 import { fetchLocalComps } from './localcomps.js';
 import { scoreListing } from './score.js';
-import { FRESHNESS, isTooVague } from './config.js';
+import { FRESHNESS, isTooVague, pickupCost } from './config.js';
+import { identity } from './identity.js';
+import { confidence as valuationConfidence } from './valuation-confidence.js';
 import { allIn, chunk, placeholders } from './d1.js';
 import { createMeter, metered } from './budget.js';
 
@@ -48,12 +50,40 @@ export const retryDelay = (attempts) => RETRY_AFTER_MS[Math.min(Math.max(attempt
 
 const isLocalKey = (k) => k.startsWith('local:');
 
+// SHADOW: the v2 valuation confidence, stored beside the original and read by
+// nothing that ranks or gates. v2 = P(right product) × P(estimate within 25% of
+// the item's real resale value | right product); see valuation-confidence.js.
+// Expected profit weighs the case where the comps were the wrong product,
+// taken as reselling near cost: the loss is the drive or the inbound freight.
+function shadowConfidence(listing, comp, condition, s) {
+  const none = { confidence: null, pRight: null, pWithin: null, expectedProfit: null };
+  if (!comp || (comp.active_median == null && comp.retail_price == null)) return none;
+  const id = identity(listing.title ?? '');
+  const c = valuationConfidence({
+    strength: id.strength,
+    band: condition?.band ?? 'unknown',
+    comps: {
+      n: comp.n_active ?? 0,
+      p25: comp.active_p25,
+      p75: comp.active_p75,
+      median: comp.active_median ?? comp.retail_price,
+      newMedian: comp.active_median != null ? comp.retail_price : null,
+      source: comp.source ?? 'ebay',
+      filtered: comp.source === 'local' || comp.filtered === 1,
+      purity: comp.n_results ? (comp.n_relevant ?? 0) / comp.n_results : 0.3,
+    },
+  });
+  const overhead = listing.acquisition_mode === 'shipped' ? listing.inbound_ship ?? 0 : pickupCost(listing.distance_mi);
+  const expectedProfit = s.profit != null ? c.pRight * s.profit + (1 - c.pRight) * -overhead : null;
+  return { confidence: c.confidence, pRight: c.pRight, pWithin: c.pWithin, expectedProfit };
+}
+
 function upsertComp(db, c) {
   return db
     .prepare(
       `INSERT INTO comps (product_key, retail_price, active_median, active_p25, active_p75,
-                          n_active, source, fetched_at, expires_at)
-       VALUES (?,?,?,?,?,?,?,?,?)
+                          n_active, source, n_results, n_relevant, filtered, fetched_at, expires_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT (product_key) DO UPDATE SET
          retail_price = excluded.retail_price,
          active_median = excluded.active_median,
@@ -61,12 +91,16 @@ function upsertComp(db, c) {
          active_p75 = excluded.active_p75,
          n_active = excluded.n_active,
          source = excluded.source,
+         n_results = excluded.n_results,
+         n_relevant = excluded.n_relevant,
+         filtered = excluded.filtered,
          fetched_at = excluded.fetched_at,
          expires_at = excluded.expires_at`
     )
     .bind(
       c.product_key, c.retail_price, c.active_median, c.active_p25, c.active_p75,
-      c.n_active, c.source, c.fetched_at, c.expires_at
+      c.n_active, c.source, c.n_results ?? null, c.n_relevant ?? null, c.filtered ?? 0,
+      c.fetched_at, c.expires_at
     );
 }
 
@@ -248,7 +282,20 @@ export async function resolvePending(
   for (const c of cached) compByKey.set(c.product_key, c);
 
   const staleKeys = keys.filter((k) => !compByKey.has(k));
-  const queryFor = new Map([...matches.values()].map((m) => [m.product_key, m.query]));
+  // What to search eBay for, and what counts as the product in the results.
+  // Built from the title's identity (brand, model code, generation), not the
+  // matcher's words, which carried sale and condition chatter into searches
+  // ("fire" for a Fire TV box). Falls back to the matcher's query when the
+  // title names nothing identifiable. Per product, from its first listing.
+  const identityFor = new Map();
+  const queryFor = new Map();
+  for (const [listingId, m] of matches) {
+    if (queryFor.has(m.product_key)) continue;
+    const listing = pending.find((l) => l.id === listingId);
+    const id = identity(listing?.title ?? '');
+    identityFor.set(m.product_key, id);
+    queryFor.set(m.product_key, id.query && !['none', 'noun'].includes(id.strength) ? id.query : m.query);
+  }
 
   // Held back for the calls every run must still make after pricing: the
   // conditions lookup and the batch that saves the scores.
@@ -287,7 +334,11 @@ export async function resolvePending(
   const lookupEbay = async (key) => {
     try {
       token ??= await getToken(env, fetchImpl);
-      const comp = await fetchComps(env, { product_key: key, query: queryFor.get(key), token }, fetchImpl);
+      const comp = await fetchComps(
+        env,
+        { product_key: key, query: queryFor.get(key), token, identity: identityFor.get(key) },
+        fetchImpl
+      );
       compByKey.set(key, comp);
       compStmts.push(upsertComp(db, comp));
     } catch (err) {
@@ -387,6 +438,7 @@ export async function resolvePending(
     });
 
     if (s.score != null) scored += 1;
+    const v2 = shadowConfidence(listing, compByKey.get(match.product_key), condById.get(listing.id), s);
     scoreStmts.push(
       schedule(listing, { done: s.score != null, attempted: compByKey.has(match.product_key) })
     );
@@ -395,18 +447,22 @@ export async function resolvePending(
       db
         .prepare(
           `INSERT INTO scores (listing_id, anchor_value, anchor_source, est_net_fb, est_net_ebay,
-                               est_net_blended, acquisition_cost, profit, roi, confidence, score, computed_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                               est_net_blended, acquisition_cost, profit, roi, confidence, score,
+                               confidence_v2, p_right, p_within, expected_profit, computed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT (listing_id) DO UPDATE SET
              anchor_value = excluded.anchor_value, anchor_source = excluded.anchor_source,
              est_net_fb = excluded.est_net_fb, est_net_ebay = excluded.est_net_ebay,
              est_net_blended = excluded.est_net_blended, acquisition_cost = excluded.acquisition_cost,
              profit = excluded.profit, roi = excluded.roi, confidence = excluded.confidence,
-             score = excluded.score, computed_at = excluded.computed_at`
+             score = excluded.score, confidence_v2 = excluded.confidence_v2, p_right = excluded.p_right,
+             p_within = excluded.p_within, expected_profit = excluded.expected_profit,
+             computed_at = excluded.computed_at`
         )
         .bind(
           s.listing_id, s.anchor_value, s.anchor_source, s.est_net_fb, s.est_net_ebay,
-          s.est_net_blended, s.acquisition_cost, s.profit, s.roi, s.confidence, s.score, s.computed_at
+          s.est_net_blended, s.acquisition_cost, s.profit, s.roi, s.confidence, s.score,
+          v2.confidence, v2.pRight, v2.pWithin, v2.expectedProfit, s.computed_at
         )
     );
   }

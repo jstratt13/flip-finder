@@ -199,3 +199,48 @@ test('conditions that were not asked for never leak into either side', async () 
   assert.equal(comp.active_median, 200);
   assert.equal(comp.n_active, 1);
 });
+
+test('comps are built only from results that are the listing product', async () => {
+  const env = fakeEnv();
+  const { identity } = await import('../src/identity.js');
+  const impl = async (url) => {
+    if (String(url).includes('oauth2/token')) {
+      return { ok: true, status: 200, json: async () => ({ access_token: 't', expires_in: 7200 }) };
+    }
+    // Shapes seen in the Sept 2026 sample for "Apple iPhone 13 128GB".
+    const item = (title, price, conditionId = '3000') => ({ title, price: { value: String(price) }, conditionId });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        itemSummaries: [
+          item('Apple iPhone 13 A2482 128GB Midnight Unlocked', 230),
+          item('Apple iPhone 13 128GB Blue - Good', 240),
+          item('Apple iPhone 13 - 128 GB - Midnight (Unlocked)', 250),
+          item('Apple iPhone 14 128GB Midnight', 330),            // different generation
+          item('Apple iPhone 13 Pro 128GB Graphite', 380),       // different variant
+          item('Case for Apple iPhone 13 Midnight', 12),         // accessory
+          item('Apple iPhone 12 64/128GB Fully Unlocked', 180),  // different generation
+        ],
+      }),
+    };
+  };
+  const comp = await fetchComps(
+    env,
+    { product_key: 'k', query: 'apple iphone 13 128gb', identity: identity('Apple iPhone 13 - 128GB - Midnight') },
+    impl
+  );
+  assert.equal(comp.n_results, 7);
+  assert.equal(comp.n_relevant, 3);
+  assert.equal(comp.filtered, 1);
+  assert.equal(comp.n_active, 3);
+  assert.equal(comp.active_median, 240);
+});
+
+test('without an identity every result counts, as before', async () => {
+  const env = fakeEnv();
+  const f = fakeFetch([400], [200, 210]);
+  const comp = await fetchComps(env, { product_key: 'x', query: 'x' }, f.impl);
+  assert.equal(comp.filtered, 0);
+  assert.equal(comp.n_relevant, comp.n_results);
+});

@@ -1,4 +1,5 @@
 import { summarize, percentile } from './stats.js';
+import { judgeResult } from './identity.js';
 
 const OAUTH_URL = 'https://api.ebay.com/identity/v1/oauth2/token';
 const SEARCH_URL = 'https://api.ebay.com/buy/browse/v1/item_summary/search';
@@ -123,7 +124,7 @@ const COMP_PAGE_SIZE = 50;
 // null and scoring falls back to the used median alone, as it always has when
 // one side was missing. Cached by product_key so many listings of the same item
 // cost one lookup.
-export async function fetchComps(env, { product_key, query, token }, fetchImpl = fetch) {
+export async function fetchComps(env, { product_key, query, token, identity: id }, fetchImpl = fetch) {
   // A failed search throws: "couldn't search" must never be cached as "found
   // nothing", or retries would be suppressed long after an outage ends.
   const items = await search(
@@ -131,8 +132,14 @@ export async function fetchComps(env, { product_key, query, token }, fetchImpl =
     { query, conditionIds: [CONDITION.NEW, CONDITION.USED], limit: COMP_PAGE_SIZE, token },
     fetchImpl
   );
-  const newItems = items.filter((i) => sideOf(i) === 'new');
-  const usedItems = items.filter((i) => sideOf(i) === 'used');
+  // Only results that are the listing's product count. Production's searches
+  // used to return mostly other models and accessories: in the Sept 2026 eBay
+  // sample, 16–30% of results for model-code titles were the product. When the
+  // identity names nothing checkable (no brand, code or generation), every
+  // result is kept, as before.
+  const kept = id ? items.filter((i) => judgeResult(i.title, id).relevant !== false) : items;
+  const newItems = kept.filter((i) => sideOf(i) === 'new');
+  const usedItems = kept.filter((i) => sideOf(i) === 'used');
 
   const retail = summarize(newItems.map((i) => i.price));
   const used = summarize(usedItems.map((i) => i.price));
@@ -148,6 +155,9 @@ export async function fetchComps(env, { product_key, query, token }, fetchImpl =
     active_p75: used.p75,
     n_active: used.n,
     source: 'ebay',
+    n_results: items.length,
+    n_relevant: kept.length,
+    filtered: id ? 1 : 0,
     fetched_at: now,
     // A product with no comps at all may pick some up later, so re-check it
     // sooner than one we successfully priced.

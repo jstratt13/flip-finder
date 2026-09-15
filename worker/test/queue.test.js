@@ -121,10 +121,42 @@ test('a too-vague listing leaves the queue without an eBay lookup', async () => 
   };
   await resolvePending({ ...env, DB: db }, { fetchImpl });
 
-  assert.deepEqual(searched, ['sony wh-1000xm4 headphones']);
+  assert.deepEqual(searched, ['sony wh-1000xm4 headphone']);
   const dequeued = db.batches
     .flat()
     .filter((s) => /score_due_at = NULL/.test(s.sql))
     .map((s) => s.args[0]);
   assert.deepEqual(dequeued, ['v']);
+});
+
+test('eBay is searched with the title identity, and v2 confidence is stored in shadow', async () => {
+  const env = { EBAY_CLIENT_ID: 'x', EBAY_CLIENT_SECRET: 'y' };
+  const db = fakeDb({ pending: [listing('m', 'Selling my Sony WH-1000XM4 headphones, barely used, cash only')] });
+  const searched = [];
+  const fetchImpl = async (url) => {
+    const u = String(url);
+    if (u.includes('oauth')) return { ok: true, status: 200, json: async () => ({ access_token: 't', expires_in: 7200 }) };
+    searched.push(new URL(u).searchParams.get('q'));
+    const items = [180, 190, 200, 210, 220, 230, 240, 250].map((p, i) => ({
+      title: `Sony WH-1000XM4 Wireless Headphones ${i}`, price: { value: String(p) }, conditionId: '3000',
+    }));
+    return { ok: true, status: 200, json: async () => ({ itemSummaries: items }) };
+  };
+  await resolvePending({ ...env, DB: db }, { fetchImpl });
+
+  // Sale chatter ("selling", "barely used", "cash only") stays out of the search.
+  assert.deepEqual(searched, ['sony wh-1000xm4 headphone']);
+
+  const score = db.batches.flat().find((s) => /INSERT INTO scores/.test(s.sql));
+  const cols = score.sql.match(/INSERT INTO scores \(([^)]+)\)/)[1].split(',').map((c) => c.trim());
+  const row = Object.fromEntries(cols.map((c, i) => [c, score.args[i]]));
+  assert.ok(row.confidence_v2 > 0 && row.confidence_v2 < 1, String(row.confidence_v2));
+  assert.equal(row.p_right, 0.9);
+  assert.ok(row.expected_profit != null);
+
+  const comp = db.batches.flat().find((s) => /INSERT INTO comps/.test(s.sql));
+  const ccols = comp.sql.match(/INSERT INTO comps \(([^)]+)\)/)[1].split(',').map((c) => c.trim());
+  const crow = Object.fromEntries(ccols.map((c, i) => [c, comp.args[i]]));
+  assert.equal(crow.filtered, 1);
+  assert.equal(crow.n_results, 8);
 });
