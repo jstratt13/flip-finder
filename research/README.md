@@ -20,6 +20,7 @@ Run from this folder with `node <script>`, in order; each writes to `out/`.
 | `06-sample-filtered-replay.mjs` | Test-set listings priced from stored comps vs identity-filtered eBay results |
 | `07-query-comparison.mjs` | Production's query (sample 1) vs the identity-first query (sample 2), same listings |
 | `08-matcher-replay.mjs` | Matcher v2 vs v3 over stored listings: too-vague calls, scores, key merges/splits, eBay lookups needed |
+| `09-category-fit.mjs` | eBay result category as a relevance signal on top of the judge: labelled accuracy, and what it drops from sample 2 |
 
 `lib/identity.mjs` reads a title's identity and judges eBay results against it.
 `lib/confidence.mjs` is the draft model: P(right product) × P(within 25% | right).
