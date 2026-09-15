@@ -161,3 +161,57 @@ test('city coordinates never overwrite exact ones, and trying costs no write', a
   assert.equal(await ingest(db, [grid({ location_name: exact.location_name })]), 0);
   assert.equal(row(db).lat, exact.lat);
 });
+
+// ------------------------------------------------ capture price range ($5–$1,000)
+
+const stored = (db) => db.raw.prepare('SELECT id FROM listings ORDER BY id').all().map((r) => r.id);
+
+test('listings with no price, under $5 or over $1,000 are refused', async (t) => {
+  withClock(t, T0);
+  const db = d1();
+  const r = await ingestBatch(db, [
+    grid({ source_id: 'noprice', price: null }),
+    grid({ source_id: 'one', price: 1 }),
+    grid({ source_id: 'fourish', price: 4.99 }),
+    grid({ source_id: 'five', price: 5 }),
+    grid({ source_id: 'thousand', price: 1000 }),
+    grid({ source_id: 'car', price: 27500 }),
+  ]);
+  assert.deepEqual(stored(db), ['craigslist:five', 'craigslist:thousand']);
+  assert.equal(r.accepted, 2);
+  assert.deepEqual(
+    r.rejected.map((x) => x.error).sort(),
+    ['no price', 'price over $1000', 'price under $5', 'price under $5'].sort()
+  );
+  // Nothing refused joins the scoring queue or writes price history.
+  assert.equal(db.raw.prepare('SELECT COUNT(*) n FROM price_history').get().n, 2);
+});
+
+test('a detail page without a price still upgrades a listing stored with one', async (t) => {
+  const tick = withClock(t, T0);
+  const db = d1();
+  await ingest(db, [grid()]);
+  tick(60 * 1000);
+  const r = await ingestBatch(db, [detail({ price: null })]);
+  assert.equal(r.accepted, 1);
+  assert.equal(condition(db).band, 'like_new');
+  assert.equal(row(db).price, 150);
+});
+
+test('a price carried by the grid card in the same batch covers its detail page', async (t) => {
+  withClock(t, T0);
+  const db = d1();
+  const r = await ingestBatch(db, [grid(), detail({ price: null })]);
+  assert.equal(r.accepted, 2);
+  assert.equal(condition(db).band, 'like_new');
+});
+
+test('a stored listing re-captured above $1,000 keeps its last in-range record', async (t) => {
+  const tick = withClock(t, T0);
+  const db = d1();
+  await ingest(db, [grid({ price: 900 })]);
+  tick(2 * HOUR);
+  const r = await ingestBatch(db, [grid({ price: 1200 })]);
+  assert.equal(r.accepted, 0);
+  assert.equal(row(db).price, 900);
+});

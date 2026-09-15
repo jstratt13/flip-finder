@@ -1,4 +1,4 @@
-import { HOME, haversineMi } from './config.js';
+import { HOME, haversineMi, CAPTURE_PRICE } from './config.js';
 import { assessCondition } from './condition.js';
 import { categorize } from './categorize.js';
 import { coordsForCity } from './cities.js';
@@ -106,6 +106,31 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
     ids
   );
   const priorPrice = new Map(existing.map((r) => [r.id, r.price]));
+
+  // The price range is judged on what the listing's price will be once this
+  // batch is stored: the last price this batch carries for it, or failing that
+  // the stored one. So a detail page that arrives without a price still
+  // upgrades a listing already stored with one, rather than being refused.
+  const batchPrice = new Map();
+  for (const n of accepted) if (n.price != null) batchPrice.set(n.id, n.price);
+
+  const inRange = [];
+  for (const n of accepted) {
+    const price = batchPrice.get(n.id) ?? priorPrice.get(n.id) ?? null;
+    const reason =
+      price == null
+        ? 'no price'
+        : price < CAPTURE_PRICE.min
+          ? `price under $${CAPTURE_PRICE.min}`
+          : price > CAPTURE_PRICE.max
+            ? `price over $${CAPTURE_PRICE.max}`
+            : null;
+    if (reason) rejected.push({ source_id: n.source_id, error: reason });
+    else inRange.push(n);
+  }
+  accepted.length = 0;
+  accepted.push(...inRange);
+  if (!accepted.length) return { received: items.length, accepted: 0, rejected, results: [] };
 
   // Condition inputs merged the way the listing upsert merges them: a capture's
   // value wins, a missing one keeps what's stored. A grid card carries no

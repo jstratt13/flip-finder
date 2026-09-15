@@ -153,6 +153,13 @@ export const SHIPPING = {
   ],
 };
 
+// Listings worth keeping at all. Set by Jordan: no ask means nothing to compare,
+// under $5 is almost always "message me" or a haggling placeholder (and would
+// read as a huge ROI), and over $1,000 is outside the cash he buys with.
+// Anything outside this range is refused at ingest — never stored, scored,
+// priced against eBay, or shown on the Captured tab. Both ends inclusive.
+export const CAPTURE_PRICE = { min: 5, max: 1000 };
+
 export const PICKUP = {
   cost_per_mile: 0.35,
   round_trip: true,
