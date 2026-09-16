@@ -278,3 +278,30 @@ test('a brand alone, or a brand that is an ordinary word, does not name a produc
   assert.equal(matchProduct('Moving Sale! Ping Pong Table with Paddles and Net', 'furniture').brand, null);
   assert.equal(matchProduct('Air Jordan 4 retro OG Fire Red 2020 size 10').match_score, 0.9);
 });
+
+test('comps are delivered prices: item plus its shipping', async () => {
+  const env = fakeEnv();
+  // Two used listings: same delivered price, advertised differently.
+  const impl = async (url) => {
+    if (String(url).includes('oauth2/token')) {
+      return { ok: true, status: 200, json: async () => ({ access_token: 't', expires_in: 7200 }) };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        itemSummaries: [
+          { itemId: '1', title: 'thing', price: { value: '20' }, conditionId: '3000', condition: 'Used',
+            shippingOptions: [{ shippingCost: { value: '15' } }] },
+          { itemId: '2', title: 'thing', price: { value: '35' }, conditionId: '3000', condition: 'Used',
+            shippingOptions: [{ shippingCost: { value: '0' } }] },
+          { itemId: '3', title: 'thing', price: { value: '35' }, conditionId: '3000', condition: 'Used',
+            shippingOptions: [{ shippingCost: { value: '0' } }] },
+        ],
+      }),
+    };
+  };
+
+  const comp = await fetchComps(env, { product_key: 'x', query: 'x' }, impl);
+  assert.equal(comp.active_median, 35, 'the $20 + $15 listing is a $35 comp');
+});

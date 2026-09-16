@@ -143,8 +143,15 @@ export async function fetchComps(env, { product_key, query, token, identity: id 
 
   // Both sides are resale listings; they differ only in the condition of what
   // is being resold. score.js picks the side that matches the local item.
-  const retail = summarize(newItems.map((i) => i.price));
-  const used = summarize(usedItems.map((i) => i.price));
+  //
+  // Delivered price, not item price: a $20 part with $15 postage competes with
+  // a $35 one that ships free, and eBay's own buyers compare the total. Taking
+  // the item price alone understated small items — the side of the market where
+  // shipping is most of the cost — while scoring still subtracted our own
+  // outbound shipping from the sale, charging the freight twice.
+  const delivered = (i) => i.price + (Number.isFinite(i.shipping) ? i.shipping : 0);
+  const retail = summarize(newItems.map(delivered));
+  const used = summarize(usedItems.map(delivered));
 
   const now = Date.now();
   const empty = retail.median == null && used.median == null;
