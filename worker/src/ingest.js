@@ -118,6 +118,8 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
   const batchPrice = new Map();
   for (const n of accepted) if (n.price != null) batchPrice.set(n.id, n.price);
 
+  const known = new Map(existing.map((r) => [r.id, r]));
+
   const inRange = [];
   for (const n of accepted) {
     const price = batchPrice.get(n.id) ?? priorPrice.get(n.id) ?? null;
@@ -132,8 +134,51 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
     if (reason) rejected.push({ source_id: n.source_id, error: reason });
     else inRange.push(n);
   }
+  // A listing whose condition nobody stated never enters the system (Jordan,
+  // 2026-09-16). Every valuation is multiplied by a condition guess — 0.65 when
+  // unknown — so an unknown-condition listing is a guess at every level, and it
+  // still spends one of the day's eBay lookups to get there. A seller who wrote
+  // a description and said nothing about condition usually has a reason.
+  //
+  // Judged on everything known about the listing: a structured condition field
+  // (Facebook states one outright) counts, as does condition language in the
+  // title. Only new listings are gated — one already stored was accepted under
+  // whatever rules applied then, and a later grid card carrying a price drop
+  // must still reach it.
+  const merged = new Map();
+  for (const n of inRange) {
+    const m = merged.get(n.id) ?? { title: '', description: '', condition_raw: '' };
+    merged.set(n.id, {
+      title: n.title ?? m.title,
+      description: n.description ?? m.description,
+      condition_raw: n.condition_raw ?? m.condition_raw,
+    });
+  }
+
+  const statedCondition = new Map();
+  for (const [id, m] of merged) {
+    const prior = known.get(id);
+    if (prior) { statedCondition.set(id, true); continue; }
+    const band = assessCondition({
+      title: m.title || '',
+      description: m.description || '',
+      condition_raw: m.condition_raw || '',
+    }).band;
+    statedCondition.set(id, band !== 'unknown');
+  }
+
+  const withCondition = [];
+  for (const n of inRange) {
+    if (statedCondition.get(n.id)) { withCondition.push(n); continue; }
+    const m = merged.get(n.id);
+    rejected.push({
+      source_id: n.source_id,
+      error: m?.description ? 'description states no condition' : 'no description',
+    });
+  }
+
   accepted.length = 0;
-  accepted.push(...inRange);
+  accepted.push(...withCondition);
   if (!accepted.length) return { received: items.length, accepted: 0, rejected, results: [] };
 
   // Condition inputs merged the way the listing upsert merges them: a capture's
@@ -141,7 +186,6 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
   // description, and assessing it alone used to overwrite a detail page's
   // "like new" with "unknown" — confidence 0.2, enough to drop a listing below
   // the ranking gate.
-  const known = new Map(existing.map((r) => [r.id, r]));
 
   // One listing can arrive twice in a batch (grid card plus detail page), so
   // collapse to the last known price per id before deciding what changed.

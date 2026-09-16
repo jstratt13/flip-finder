@@ -77,6 +77,8 @@ test('ingest accepts a batch larger than 100', async () => {
     title: `DeWalt DCD${700 + i} drill`,
     price: 80,
     capture_phase: 'grid',
+    // Ingest refuses listings whose condition nobody stated.
+    condition_raw: 'good',
   }));
   const r = await ingestBatch(strictD1(), items);
   assert.equal(r.accepted, 150);

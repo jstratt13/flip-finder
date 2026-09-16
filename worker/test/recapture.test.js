@@ -41,10 +41,15 @@ function withClock(t, start) {
 const HOUR = 60 * 60 * 1000;
 const T0 = Date.UTC(2026, 8, 13, 20, 0, 0);
 
-const grid = (overrides = {}) => ({
+// Ingest refuses a listing whose condition nobody stated, so the shared fixture
+// states one. bare() is the same card with nothing said about condition — what
+// a Craigslist search page actually gives us.
+const bare = (overrides = {}) => ({
   source: 'craigslist', source_id: '100', title: 'Sony WH-1000XM4 headphones', price: 150,
   location_name: 'Irvine', capture_phase: 'grid', ...overrides,
 });
+
+const grid = (overrides = {}) => bare({ condition_raw: 'good', ...overrides });
 
 const detail = (overrides = {}) => grid({
   capture_phase: 'detail', condition_raw: 'like new',
@@ -103,8 +108,10 @@ test('a grid card no longer erases a detail page condition', async (t) => {
   await ingest(db, [detail()]);
   assert.equal(condition(db).band, 'like_new');
 
+  // A bare grid card would be refused outright as a new listing; on one already
+  // stored it must still land, and must not erase what the detail page said.
   tick(2 * HOUR);
-  await ingest(db, [grid()]);
+  await ingest(db, [bare()]);
   assert.equal(condition(db).band, 'like_new');
   assert.ok(condition(db).confidence > 0.5);
 });
@@ -113,7 +120,7 @@ test('a detail page still upgrades a grid-only condition', async (t) => {
   const tick = withClock(t, T0);
   const db = d1();
   await ingest(db, [grid()]);
-  assert.equal(condition(db).band, 'unknown');
+  assert.equal(condition(db).band, 'good');
 
   tick(60 * 1000);
   await ingest(db, [detail()]);
@@ -124,8 +131,62 @@ test('a detail page still upgrades a grid-only condition', async (t) => {
 test('grid and detail for one listing in the same batch keep the detail condition', async (t) => {
   withClock(t, T0);
   const db = d1();
-  await ingest(db, [detail(), grid()]);
+  await ingest(db, [detail(), bare()]);
   assert.equal(condition(db).band, 'like_new');
+});
+
+// ------------------------------------------------ condition stated, or refused
+
+test('a listing whose condition nobody stated never enters the system', async (t) => {
+  withClock(t, T0);
+  const db = d1();
+
+  // A Craigslist search card: title and price, nothing about condition.
+  const r = await ingestBatch(db, [bare({ source_id: 'silent' })]);
+  assert.equal(r.accepted, 0);
+  assert.equal(r.rejected[0].error, 'no description');
+  assert.equal(row(db, 'craigslist:silent'), undefined);
+});
+
+test('a description that says nothing about condition is refused too', async (t) => {
+  withClock(t, T0);
+  const db = d1();
+  const r = await ingestBatch(db, [
+    bare({ source_id: 'quiet', description: 'Pickup in Irvine only. Cash. Text me for the address, no lowballs.' }),
+  ]);
+  assert.equal(r.accepted, 0);
+  assert.equal(r.rejected[0].error, 'description states no condition');
+  assert.equal(row(db, 'craigslist:quiet'), undefined);
+});
+
+test('a stated condition is enough, wherever it is stated', async (t) => {
+  withClock(t, T0);
+  const db = d1();
+
+  // In the description...
+  const a = await ingestBatch(db, [bare({ source_id: 'prose', description: 'Barely used, no scratches.' })]);
+  assert.equal(a.accepted, 1);
+
+  // ...in Facebook's own condition field, with no description at all...
+  const b = await ingestBatch(db, [bare({ source_id: 'field', source: 'facebook', condition_raw: 'Used - Like New' })]);
+  assert.equal(b.accepted, 1);
+
+  // ...or in the title, which is where most of ours come from.
+  const c = await ingestBatch(db, [bare({ source_id: 'title', title: 'Sony WH-1000XM4 headphones - mint condition' })]);
+  assert.equal(c.accepted, 1);
+});
+
+test('a listing already stored is not refused by a later bare grid card', async (t) => {
+  // It was accepted under the rules of its day, and the card carries a price
+  // drop that has to reach it.
+  const tick = withClock(t, T0);
+  const db = d1();
+  await ingest(db, [detail()]);
+
+  tick(2 * HOUR);
+  const r = await ingestBatch(db, [bare({ price: 120 })]);
+  assert.equal(r.accepted, 1);
+  assert.equal(row(db).price, 120);
 });
 
 test('condition text from the old Craigslist adapter is trimmed to its own line', async (t) => {
@@ -158,7 +219,7 @@ test('city coordinates never overwrite exact ones, and trying costs no write', a
 
   tick(5 * 60 * 1000);
   // A grid card naming a city resolves to its centroid.
-  assert.equal(await ingest(db, [grid({ location_name: exact.location_name })]), 0);
+  assert.equal(await ingest(db, [bare({ location_name: exact.location_name })]), 0);
   assert.equal(row(db).lat, exact.lat);
 });
 

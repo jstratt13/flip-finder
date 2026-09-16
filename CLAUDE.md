@@ -34,7 +34,9 @@ https://claude.ai/artifact/S9E3zJQvturGPAC1WEj7cY — read it first.
 - **Jordan decides model and product changes.** Present options with measured numbers and a
   recommendation; don't ship model changes he hasn't approved.
 - **Refused at ingest (Jordan's rules):** no price, price < $5 or > $1,000, whole vehicles
-  (parts are fine).
+  (parts are fine), and **any new listing whose condition nobody stated** — no description at all,
+  or a description that never mentions condition. Title words and a source condition field count.
+  Listings already stored are never refused, so a later grid card still carries a price drop in.
 - **Free tier only** unless Jordan approves otherwise (Workers Paid at $5/mo is his open call).
 - **Stack:** Vite + React (hooks) + plain CSS in `src/index.css`. No TypeScript, Tailwind,
   UI libraries or state libraries. Worker is plain ES modules, tested with `node --test`.
