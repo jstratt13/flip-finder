@@ -10,14 +10,15 @@ export const HOME = { zip: '92649', lat: 33.7172, lon: -118.0453 };
 //
 // fair is the exception, and the only one: visibly damaged but working. Sellers
 // list cracked, dented, torn or water-damaged items as parts, so they are
-// missing from the pool a fair item is priced against. Parts listings are
+// missing from the pool a fair item is priced against. 0.65 is Jordan's number
+// (2026-09-16); calibration replaces it once sales say what damage really costs. Parts listings are
 // refused at ingest, so 0.3 is now unreachable; it stays as documentation of
 // what the band meant.
 export const CONDITION_BANDS = {
   new: { multiplier: 1.0 },
   like_new: { multiplier: 1.0 },
   good: { multiplier: 1.0 },
-  fair: { multiplier: 0.55 },
+  fair: { multiplier: 0.65 },
   parts: { multiplier: 0.3 },
   unknown: { multiplier: 1.0 },
 };
