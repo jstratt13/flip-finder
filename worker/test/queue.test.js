@@ -161,3 +161,17 @@ test('eBay is searched with the title identity, and v2 confidence is stored in s
   assert.equal(crow.filtered, 1);
   assert.equal(crow.n_results, 8);
 });
+
+test('a listing that is too vague to price loses any value it still carries', async () => {
+  // Scored under older rules, then judged too vague: it leaves the queue, so
+  // nothing else would ever clear the stale number.
+  const db = fakeDb({ pending: [listing('v', 'Free pile of cables')] });
+  await resolvePending({ DB: db }, { fetchImpl: fetch });
+
+  const stmts = db.batches.flat();
+  assert.ok(
+    stmts.some((s) => /DELETE FROM scores WHERE listing_id = \?/.test(s.sql) && s.args[0] === 'v'),
+    'the stale score should be deleted'
+  );
+  assert.deepEqual(queueUpdates(db).get('v'), undefined, 'and it should not be rescheduled');
+});

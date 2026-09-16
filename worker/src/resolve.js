@@ -437,7 +437,13 @@ export async function resolvePending(
     }
     // Too vague to price: leaves the queue. Captured shows why. A matcher
     // change that sharpens the match requeues it (rematchOutdated).
+    //
+    // Any value it already carries goes with it. Scoring only ever writes rows
+    // for listings it prices, so a score written before this rule existed — or
+    // before a matcher change made the title vague — would otherwise sit on the
+    // listing forever: 37 listings in production were still showing one.
     if (isTooVague(match.match_score)) {
+      scoreStmts.push(db.prepare('DELETE FROM scores WHERE listing_id = ?').bind(listing.id));
       scoreStmts.push(
         db.prepare('UPDATE listings SET score_due_at = NULL, score_attempts = 0 WHERE id = ?').bind(listing.id)
       );
