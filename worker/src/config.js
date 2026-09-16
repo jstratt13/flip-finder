@@ -212,6 +212,11 @@ export const SCORING = {
   beta: 1.0, // confidence exponent
   gamma: 0.5, // liquidity exponent
   min_profit: 25,
+  // The Opportunities gate, on the confidence v2 scale: the chance the valuation
+  // is within 25% of what the item really resells for. Jordan, 2026-09-16.
+  // v1's own gate (min_confidence below) no longer decides what ranks; it stays
+  // because VAGUE_MATCH_BELOW is derived from it.
+  min_confidence_v2: 0.5,
   // 0.70 on the geometric-mean scale filters the same listings that 0.35 did
   // on the old product scale; only the spread between survivors changed.
   min_confidence: 0.7,
@@ -245,6 +250,11 @@ export function confidenceFor({ matchScore, nComps, conditionConfidence }) {
 // today's equal weights and a 0.70 gate that is 0.343 — generic-word matches
 // (0.30) can never rank, so they aren't priced at all. Recomputed from the
 // weights and gate, so it moves if either does.
+// Frozen at the value it had when ranking gated on v1 confidence (0.343): the
+// match score that could never clear a 0.70 geometric mean however good the
+// comps were. Ranking moved to confidence v2, so this is no longer derived from
+// the live gate — recomputing it from a 0.5 v2 gate would quietly redefine
+// "too vague to price" as something four times looser.
 export const VAGUE_MATCH_BELOW = (() => {
   const w = CONFIDENCE.match_weight;
   const total = CONFIDENCE.match_weight + CONFIDENCE.comp_depth_weight + CONFIDENCE.condition_weight;

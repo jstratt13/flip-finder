@@ -34,8 +34,14 @@ export function rankingReason(r, gates) {
   if (r.profit < gates.min_profit) {
     return { code: 'low_profit', label: `Profit $${Math.round(r.profit)}` };
   }
-  if (r.confidence < gates.min_confidence) {
-    return { code: 'low_confidence', label: `Confidence ${r.confidence.toFixed(2)}` };
+  // Confidence is v2: the chance the valuation is within 25% of the real resale
+  // value. A scored listing with no v2 number has not been judged on that scale
+  // at all, which is not a reason to show it in the ranking.
+  if (r.confidence_v2 == null || r.confidence_v2 < gates.min_confidence_v2) {
+    return {
+      code: 'low_confidence',
+      label: r.confidence_v2 == null ? 'Not yet judged' : `Confidence ${Math.round(r.confidence_v2 * 100)}%`,
+    };
   }
   if (r.roi < gates.min_roi) {
     return { code: 'low_roi', label: `ROI ${Math.round(r.roi * 100)}%` };
@@ -69,7 +75,7 @@ const REASON_SQL = `
       THEN 'thin_comps'
     WHEN s.score IS NULL THEN 'no_margin'
     WHEN s.profit < ? THEN 'low_profit'
-    WHEN s.confidence < ? THEN 'low_confidence'
+    WHEN s.confidence_v2 IS NULL OR s.confidence_v2 < ? THEN 'low_confidence'
     WHEN s.roi < ? THEN 'low_roi'
     ELSE 'ranking'
   END`;
@@ -120,7 +126,7 @@ export async function capturedListings(
 
   const gateBinds = [
     gates.vague_match_below, gates.min_resale_comps, gates.min_resale_comps,
-    gates.min_profit, gates.min_confidence, gates.min_roi,
+    gates.min_profit, gates.min_confidence_v2, gates.min_roi,
   ];
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -149,7 +155,7 @@ export async function capturedListings(
                 c.band AS condition_band,
                 m.product_key, m.match_score,
                 cp.active_median, cp.retail_price, cp.n_active, cp.n_new, cp.source AS comp_source,
-                s.score, s.profit, s.roi, s.confidence, s.anchor_value, s.anchor_source,
+                s.score, s.profit, s.roi, s.confidence, s.confidence_v2, s.anchor_value, s.anchor_source,
                 s.est_net_blended, s.acquisition_cost,
                 EXISTS (SELECT 1 FROM acquisitions a WHERE a.listing_id = l.id) AS acquired,
                 EXISTS (SELECT 1 FROM watchlist w WHERE w.listing_id = l.id) AS watched,

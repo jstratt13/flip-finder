@@ -132,11 +132,20 @@ export function scoreListing({ listing, comp, condition, match }) {
   };
 }
 
+// What reaches Opportunities, as one predicate. Production enforces the same
+// gates in SQL (index.js), because the ranking is a query; this is what that
+// query means, and what the tests check.
+//
+// Confidence is v2 — P(right product) x P(within 25% | right product). It is
+// computed in resolve.js, beside the score rather than inside it, so callers
+// pass the stored row: a listing with no v2 number has not been judged on that
+// scale and does not rank.
 export function passesGates(s) {
   return (
     s.score != null &&
     s.profit >= SCORING.min_profit &&
-    s.confidence >= SCORING.min_confidence &&
+    s.confidence_v2 != null &&
+    s.confidence_v2 >= SCORING.min_confidence_v2 &&
     s.roi >= SCORING.min_roi
   );
 }

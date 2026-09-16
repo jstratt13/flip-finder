@@ -35,15 +35,20 @@ function freshness(lastSeen) {
 // Confidence earns a word rather than a bare number: the figure only means
 // something relative to the gate, and a colour alone can't say which side.
 // The word names what it measures — "High" alone didn't say high what.
+// Confidence is now a probability: the chance the valuation is within 25% of
+// what the item really resells for. The ranking gate is 50%, so every card here
+// is at least that; the number is shown because "high" relative to a 50% floor
+// is not the same as high in the ordinary sense.
 function confidenceLabel(c) {
   if (c == null) return { text: 'Confidence unknown', level: 'low' };
-  if (c >= 0.85) return { text: 'High confidence', level: 'high' };
-  if (c >= 0.7) return { text: 'Solid confidence', level: 'mid' };
-  return { text: 'Thin confidence', level: 'low' };
+  const pct = `${Math.round(c * 100)}%`;
+  if (c >= 0.7) return { text: `High confidence · ${pct}`, level: 'high' };
+  if (c >= 0.5) return { text: `Solid confidence · ${pct}`, level: 'mid' };
+  return { text: `Thin confidence · ${pct}`, level: 'low' };
 }
 
 function Card({ row, onOpen }) {
-  const conf = confidenceLabel(row.confidence);
+  const conf = confidenceLabel(row.confidence_v2 ?? null);
   const seen = freshness(row.last_seen);
 
   return (

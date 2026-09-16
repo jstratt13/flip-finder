@@ -158,7 +158,11 @@ export default function Detail({ listing, onClose, onChanged }) {
               ) : null}
               <Row label="Estimated profit" value={money(listing.profit)} strong />
               <Row label="Return" value={pct(listing.roi)} />
-              <Row label="Confidence" value={listing.confidence?.toFixed(2) ?? '—'} />
+              <Row
+                label="Confidence"
+                note="chance the value is within 25%"
+                value={listing.confidence_v2 != null ? `${Math.round(listing.confidence_v2 * 100)}%` : '—'}
+              />
               {listing.price_drop_pct > 0 && (
                 <Row
                   label="Seller has dropped"

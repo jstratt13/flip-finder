@@ -61,15 +61,19 @@ function seed(db, reason, { source = 'craigslist', title = `Item ${seq}`, seenAt
   );
   if (reason === 'thin_comps') return id;
 
+  // [score, profit, confidence_v2, roi] — the ranking gates on v2 confidence.
   const score = {
     no_margin: [null, null, 0.8, null],
     low_profit: [5, 10, 0.9, 0.5],
-    low_confidence: [20, 60, 0.4, 0.5],
+    low_confidence: [20, 60, 0.3, 0.5],
     low_roi: [20, 60, 0.9, 0.1],
     ranking: [40, 60, 0.9, 0.5],
   }[reason];
-  const [s, profit, confidence, roi] = score;
-  run(`INSERT INTO scores (listing_id, score, profit, confidence, roi, computed_at) VALUES (?,?,?,?,?,?)`, id, s, profit, confidence, roi, at);
+  const [s, profit, confidenceV2, roi] = score;
+  run(
+    `INSERT INTO scores (listing_id, score, profit, confidence, confidence_v2, roi, computed_at) VALUES (?,?,?,?,?,?,?)`,
+    id, s, profit, confidenceV2, confidenceV2, roi, at
+  );
   return id;
 }
 

@@ -79,7 +79,11 @@ test('pickup listing: profit nets out drive cost and passes gates', () => {
   // acquisition = 100 + (10mi round trip * 0.35) = 107
   assert.ok(Math.abs(s.acquisition_cost - 107) < 0.01);
   assert.ok(s.profit > 0);
-  assert.equal(passesGates(s), true);
+  // v2 confidence is written beside the score by resolve.js, so the gate sees
+  // the stored row, not scoreListing's return.
+  assert.equal(passesGates({ ...s, confidence_v2: 0.62 }), true);
+  assert.equal(passesGates({ ...s, confidence_v2: 0.41 }), false, 'below the 50% gate');
+  assert.equal(passesGates({ ...s, confidence_v2: null }), false, 'never judged on the v2 scale');
 });
 
 test('shipped listing: takes freight cost, never a distance penalty', () => {

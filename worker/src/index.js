@@ -227,8 +227,8 @@ async function handleListings(request, env) {
     where.push('s.score IS NOT NULL');
     where.push('s.profit >= ?');
     binds.push(num('min_profit', SCORING.min_profit));
-    where.push('s.confidence >= ?');
-    binds.push(num('min_confidence', SCORING.min_confidence));
+    where.push('s.confidence_v2 IS NOT NULL AND s.confidence_v2 >= ?');
+    binds.push(num('min_confidence_v2', SCORING.min_confidence_v2));
     where.push('s.roi >= ?');
     binds.push(num('min_roi', SCORING.min_roi));
   }
@@ -242,7 +242,8 @@ async function handleListings(request, env) {
              ORDER BY p.observed_at ASC LIMIT 1) AS first_price,
            (SELECT MIN(p.observed_at) FROM price_history p WHERE p.listing_id = l.id) AS first_priced_at,
            c.band AS condition_band, c.confidence AS condition_confidence,
-           s.profit, s.roi, s.confidence, s.score, s.anchor_value, s.anchor_source,
+           s.profit, s.roi, s.confidence, s.confidence_v2, s.p_right, s.p_within,
+           s.expected_profit, s.score, s.anchor_value, s.anchor_source,
            s.est_net_blended, s.acquisition_cost,
            EXISTS (SELECT 1 FROM watchlist w WHERE w.listing_id = l.id) AS watched
     FROM listings l
