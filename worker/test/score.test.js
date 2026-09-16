@@ -4,7 +4,7 @@ import { scoreListing, passesGates } from '../src/score.js';
 import { assessCondition } from '../src/condition.js';
 import { confidenceFor, CONFIDENCE } from '../src/config.js';
 
-const comp = { retail_price: 400, active_median: 250, n_active: 10 };
+const comp = { retail_price: 400, active_median: 250, n_active: 10, n_new: 6 };
 const match = { match_score: 0.9 };
 
 test('condition: damage language outranks optimistic language', () => {
@@ -69,11 +69,13 @@ test('pickup listing: profit nets out drive cost and passes gates', () => {
   const condition = assessCondition({ title: 'X', description: 'good condition' });
   const s = scoreListing({
     listing: { id: 'craigslist:1', price: 100, acquisition_mode: 'pickup', distance_mi: 10 },
-    comp, condition, match,
+    comp: { ...comp, active_median: 400 }, condition, match,
   });
 
-  // anchor = 400*0.45 + (250*0.8)*0.55 = 290
-  assert.ok(Math.abs(s.anchor_value - 290) < 0.01);
+  // A "good condition" item is priced off used comps alone: 400 * 0.8 = 320.
+  // The new-condition median belongs to a different condition of the item.
+  assert.ok(Math.abs(s.anchor_value - 320) < 0.01, `anchor was ${s.anchor_value}`);
+  assert.equal(s.anchor_source, 'active');
   // acquisition = 100 + (10mi round trip * 0.35) = 107
   assert.ok(Math.abs(s.acquisition_cost - 107) < 0.01);
   assert.ok(s.profit > 0);
@@ -151,4 +153,44 @@ test('low-confidence match cannot reach the top of the ranking', () => {
     comp, condition, match: { match_score: 0.1 },
   });
   assert.equal(passesGates(weak), false);
+});
+
+// Resale comps are kept on both sides; the item's own condition picks the side.
+test('a new or like-new listing is priced against new-condition comps', () => {
+  const listing = { id: 'craigslist:2', price: 100, acquisition_mode: 'pickup', distance_mi: 10 };
+  const sealed = scoreListing({
+    listing, comp, match,
+    condition: assessCondition({ title: 'X', description: 'brand new, sealed in box' }),
+  });
+  // 400 * 0.8, from the new-condition listings — not the used median.
+  assert.equal(sealed.anchor_source, 'retail');
+  assert.ok(Math.abs(sealed.anchor_value - 320) < 0.01, `anchor was ${sealed.anchor_value}`);
+
+  // Unknown condition keeps the conservative side.
+  const unknown = scoreListing({ listing, comp, match, condition: null });
+  assert.equal(unknown.anchor_source, 'active');
+  assert.ok(Math.abs(unknown.anchor_value - 200) < 0.01);
+});
+
+test('new-condition comps are only used when there are enough of them', () => {
+  const thinNew = { ...comp, n_new: 2 };
+  const s = scoreListing({
+    listing: { id: 'craigslist:3', price: 100, acquisition_mode: 'pickup', distance_mi: 10 },
+    comp: thinNew, match,
+    condition: assessCondition({ title: 'X', description: 'brand new, sealed in box' }),
+  });
+  assert.equal(s.anchor_source, 'active');
+});
+
+test('one or two resale listings is not a market', () => {
+  for (const n of [0, 1, 2]) {
+    const s = scoreListing({
+      listing: { id: `craigslist:9${n}`, price: 100, acquisition_mode: 'pickup', distance_mi: 10 },
+      comp: { retail_price: 400, active_median: 250, n_active: n, n_new: 0 },
+      match,
+      condition: assessCondition({ title: 'X', description: 'good condition' }),
+    });
+    assert.equal(s.anchor_value, null, `n_active ${n} should not produce a value`);
+    assert.equal(s.score, null);
+  }
 });

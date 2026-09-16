@@ -44,6 +44,7 @@ const REASON_TONE = {
   too_vague: 'warn',
   no_price: 'warn',
   no_comps: 'info',
+  thin_comps: 'info',
 };
 
 function ageText(lastSeen) {

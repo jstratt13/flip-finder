@@ -82,14 +82,15 @@ function upsertComp(db, c) {
   return db
     .prepare(
       `INSERT INTO comps (product_key, retail_price, active_median, active_p25, active_p75,
-                          n_active, source, n_results, n_relevant, filtered, fetched_at, expires_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                          n_active, n_new, source, n_results, n_relevant, filtered, fetched_at, expires_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT (product_key) DO UPDATE SET
          retail_price = excluded.retail_price,
          active_median = excluded.active_median,
          active_p25 = excluded.active_p25,
          active_p75 = excluded.active_p75,
          n_active = excluded.n_active,
+         n_new = excluded.n_new,
          source = excluded.source,
          n_results = excluded.n_results,
          n_relevant = excluded.n_relevant,
@@ -99,7 +100,7 @@ function upsertComp(db, c) {
     )
     .bind(
       c.product_key, c.retail_price, c.active_median, c.active_p25, c.active_p75,
-      c.n_active, c.source, c.n_results ?? null, c.n_relevant ?? null, c.filtered ?? 0,
+      c.n_active, c.n_new ?? null, c.source, c.n_results ?? null, c.n_relevant ?? null, c.filtered ?? 0,
       c.fetched_at, c.expires_at
     );
 }
@@ -142,6 +143,10 @@ export async function rematchOutdated(db, { limit = 200, now = Date.now() } = {}
   const stmts = [];
   const touchedLocal = new Set();
   const changedIds = [];
+  // A listing that is too vague to price now must not keep a value it was given
+  // before that rule existed: it is never rescored, so nothing else clears it.
+  // Production had a "Kay Dreadnought" showing $928 against a $149 ask this way.
+  const unpriceableIds = [];
 
   for (const l of outdated) {
     const m = matchProduct(l.title, l.category ?? '');
@@ -154,6 +159,8 @@ export async function rematchOutdated(db, { limit = 200, now = Date.now() } = {}
       if (l.old_key.startsWith('local:')) touchedLocal.add(l.old_key);
       if (newKey?.startsWith('local:')) touchedLocal.add(newKey);
     }
+
+    if (!m || isTooVague(m.match_score)) unpriceableIds.push(l.id);
 
     stmts.push(
       m
@@ -193,9 +200,18 @@ export async function rematchOutdated(db, { limit = 200, now = Date.now() } = {}
     );
   }
 
+  for (const ids of chunk(unpriceableIds)) {
+    stmts.push(db.prepare(`DELETE FROM scores WHERE listing_id IN (${placeholders(ids)})`).bind(...ids));
+    stmts.push(
+      db
+        .prepare(`UPDATE listings SET score_due_at = NULL, score_attempts = 0 WHERE id IN (${placeholders(ids)})`)
+        .bind(...ids)
+    );
+  }
+
   // One batch, in order: the pool-wide score delete must see the new keys.
   await db.batch(stmts);
-  return { rematched: outdated.length, changed: changedIds.length };
+  return { rematched: outdated.length, changed: changedIds.length, unpriceable: unpriceableIds.length };
 }
 
 // Listings that have gone unseen long enough to be treated as removed. Uses

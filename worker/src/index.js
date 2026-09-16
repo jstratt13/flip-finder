@@ -1,7 +1,7 @@
 import { ingestBatch } from './ingest.js';
 import { capturedListings, PAGE_SIZE } from './captured.js';
 import { resolvePending } from './resolve.js';
-import { HOME, SCORING, VAGUE_MATCH_BELOW } from './config.js';
+import { HOME, SCORING, VAGUE_MATCH_BELOW, MIN_RESALE_COMPS } from './config.js';
 import { CATEGORIES } from './categorize.js';
 import { calibrate, localMarketRatio } from './calibrate.js';
 import {
@@ -337,7 +337,7 @@ async function handleCaptured(request, env) {
     limit: Math.min(Number(u.searchParams.get('limit')) || PAGE_SIZE, 200),
     cursor: u.searchParams.get('cursor'),
     tallies: u.searchParams.get('tallies') !== '0',
-    gates: { ...SCORING, vague_match_below: VAGUE_MATCH_BELOW },
+    gates: { ...SCORING, vague_match_below: VAGUE_MATCH_BELOW, min_resale_comps: MIN_RESALE_COMPS },
   });
   return json(result);
 }

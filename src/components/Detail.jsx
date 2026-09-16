@@ -4,9 +4,8 @@ import { money, pct } from './Listings.jsx';
 
 const ANCHOR_LABEL = {
   local: 'Local asking prices',
-  blended: 'eBay new + used',
   active: 'eBay used listings',
-  retail: 'eBay new listings',
+  retail: 'eBay new-condition listings',
 };
 
 const VENUES = [

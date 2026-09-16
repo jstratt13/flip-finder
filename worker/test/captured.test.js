@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { capturedListings, rankingReason, REASON_CODES } from '../src/captured.js';
-import { SCORING, VAGUE_MATCH_BELOW } from '../src/config.js';
+import { SCORING, VAGUE_MATCH_BELOW, MIN_RESALE_COMPS } from '../src/config.js';
 
-// The gates the worker binds: the scoring gates plus the too-vague bound.
-const GATES = { ...SCORING, vague_match_below: VAGUE_MATCH_BELOW };
+// The gates the worker binds: the scoring gates, the too-vague bound and the
+// floor under how many resale comps a value may be built on.
+const GATES = { ...SCORING, vague_match_below: VAGUE_MATCH_BELOW, min_resale_comps: MIN_RESALE_COMPS };
 
 // Real SQL against the real migrations: the reason is now computed in the query
 // so the dashboard can filter and tally everything captured, and it has to
@@ -51,9 +52,14 @@ function seed(db, reason, { source = 'craigslist', title = `Item ${seq}`, seenAt
   run(`INSERT INTO listing_matches (listing_id, product_key, match_score, method, matched_at) VALUES (?,?,?,?,?)`, id, key, reason === 'too_vague' ? 0.3 : 0.9, 'test', at);
   if (reason === 'no_comps' || reason === 'too_vague') return id;
 
-  // Retail only, no used median: still counts as having comps.
-  run(`INSERT INTO comps (product_key, retail_price, active_median, n_active, source, fetched_at, expires_at) VALUES (?,?,?,?,?,?,?)`,
-    key, 400, reason === 'no_margin' ? null : 200, 8, 'ebay', at, at + 1e9);
+  // New-condition median only, no used one: still counts as having comps.
+  // thin_comps has a used median but too few listings behind it to trust.
+  run(
+    `INSERT INTO comps (product_key, retail_price, active_median, n_active, n_new, source, fetched_at, expires_at)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    key, 400, reason === 'no_margin' ? null : 200, reason === 'thin_comps' ? 1 : 8, 2, 'ebay', at, at + 1e9
+  );
+  if (reason === 'thin_comps') return id;
 
   const score = {
     no_margin: [null, null, 0.8, null],

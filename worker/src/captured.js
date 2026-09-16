@@ -5,6 +5,8 @@
 // point — "no product match" and "awaiting comps" call for very different
 // responses, and neither is visible from an empty Opportunities tab.
 
+const NEW_BANDS = new Set(['new', 'like_new']);
+
 export function rankingReason(r, gates) {
   if (r.acquired) return { code: 'acquired', label: 'Bought' };
   if (r.status !== 'active') return { code: 'gone', label: 'No longer listed' };
@@ -15,6 +17,16 @@ export function rankingReason(r, gates) {
   }
   if (r.active_median == null && r.retail_price == null) {
     return { code: 'no_comps', label: 'Awaiting comps' };
+  }
+  // Which side of the comps prices this listing is its own condition's doing —
+  // see anchorValue in score.js; the two must agree about what is thin.
+  if (r.comp_source !== 'local') {
+    const n = NEW_BANDS.has(r.condition_band) && (r.n_new ?? 0) >= gates.min_resale_comps
+      ? r.n_new ?? 0
+      : r.n_active ?? 0;
+    if (n < gates.min_resale_comps) {
+      return { code: 'thin_comps', label: `Only ${n} resale comp${n === 1 ? '' : 's'}` };
+    }
   }
   if (r.score == null) {
     return { code: 'no_margin', label: 'No margin at this price' };
@@ -33,14 +45,16 @@ export function rankingReason(r, gates) {
 
 export const REASON_CODES = [
   'acquired', 'gone', 'no_price', 'no_match', 'too_vague', 'no_comps',
-  'no_margin', 'low_profit', 'low_confidence', 'low_roi', 'ranking',
+  'thin_comps', 'no_margin', 'low_profit', 'low_confidence', 'low_roi', 'ranking',
 ];
 
 // rankingReason, in SQL. Filtering by reason has to happen in the query: the
 // page returns the latest 200 listings, so tallying or filtering in JavaScript
 // only ever described those 200, not everything captured. The two must agree
 // branch for branch — test/captured.test.js runs both over the same rows.
-// Binds four values, in order: vague_match_below, min_profit, min_confidence, min_roi.
+// Binds six values, in order: vague_match_below, min_resale_comps (twice, for
+// the two halves of the condition-side choice), min_profit, min_confidence,
+// min_roi.
 const REASON_SQL = `
   CASE
     WHEN EXISTS (SELECT 1 FROM acquisitions a WHERE a.listing_id = l.id) THEN 'acquired'
@@ -49,6 +63,10 @@ const REASON_SQL = `
     WHEN m.product_key IS NULL OR m.product_key = '' THEN 'no_match'
     WHEN m.match_score < ? THEN 'too_vague'
     WHEN cp.active_median IS NULL AND cp.retail_price IS NULL THEN 'no_comps'
+    WHEN cp.source IS NOT 'local'
+         AND (CASE WHEN c.band IN ('new', 'like_new') AND COALESCE(cp.n_new, 0) >= ?
+                   THEN COALESCE(cp.n_new, 0) ELSE COALESCE(cp.n_active, 0) END) < ?
+      THEN 'thin_comps'
     WHEN s.score IS NULL THEN 'no_margin'
     WHEN s.profit < ? THEN 'low_profit'
     WHEN s.confidence < ? THEN 'low_confidence'
@@ -100,7 +118,10 @@ export async function capturedListings(
     binds.push(`%${term}%`, `%${term}%`);
   }
 
-  const gateBinds = [gates.vague_match_below, gates.min_profit, gates.min_confidence, gates.min_roi];
+  const gateBinds = [
+    gates.vague_match_below, gates.min_resale_comps, gates.min_resale_comps,
+    gates.min_profit, gates.min_confidence, gates.min_roi,
+  ];
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   const filtered = REASON_CODES.includes(reason);
@@ -127,7 +148,7 @@ export async function capturedListings(
                 l.last_seen, l.status, l.distance_mi, l.geo_source, l.acquisition_mode,
                 c.band AS condition_band,
                 m.product_key, m.match_score,
-                cp.active_median, cp.retail_price, cp.n_active,
+                cp.active_median, cp.retail_price, cp.n_active, cp.n_new, cp.source AS comp_source,
                 s.score, s.profit, s.roi, s.confidence, s.anchor_value, s.anchor_source,
                 s.est_net_blended, s.acquisition_cost,
                 EXISTS (SELECT 1 FROM acquisitions a WHERE a.listing_id = l.id) AS acquired,

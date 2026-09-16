@@ -103,7 +103,7 @@ test('rematch moves a misfiled accessory and reprices both pools', async () => {
   ]);
 
   const r = await rematchOutdated(db, { now: 1 });
-  assert.deepEqual(r, { rematched: 2, changed: 1 });
+  assert.deepEqual(r, { rematched: 2, changed: 1, unpriceable: 0 });
 
   const stmts = db.batches[0];
   const upserts = stmts.filter((s) => /INSERT INTO listing_matches/.test(s.sql));
@@ -137,4 +137,36 @@ test('nothing outdated means no writes', async () => {
   const db = fakeDb([]);
   assert.deepEqual(await rematchOutdated(db), { rematched: 0, changed: 0 });
   assert.equal(db.batches.length, 0);
+});
+
+test('a listing that becomes too vague to price loses its stale value', async () => {
+  // Scored under an older matcher, then re-matched down to a generic-word
+  // match: it will never be rescored, so the old value has to go with it.
+  const db = fakeDb([{ id: 'kay', title: 'Kay Dreadnought', category: '', old_key: 'dreadnought-kay', old_score: 0.9 }]);
+
+  const r = await rematchOutdated(db, { now: 1 });
+  assert.equal(r.unpriceable, 1);
+
+  const stmts = db.batches[0];
+  assert.ok(
+    stmts.some((s) => /DELETE FROM scores WHERE listing_id IN/.test(s.sql) && s.args.includes('kay')),
+    'the stale score should be deleted'
+  );
+  assert.ok(
+    stmts.some((s) => /score_due_at = NULL/.test(s.sql) && s.args.includes('kay')),
+    'and it should not sit in the scoring queue'
+  );
+});
+
+test('tables of different games are different products', () => {
+  // All three keyed as local:table and drew one $300 comp pool in production.
+  const keys = ['Pool table', '8 person poker table', 'Harvard Foosball Table'].map(
+    (t) => matchProduct(t, 'furniture').product_key
+  );
+  assert.equal(new Set(keys).size, 3, keys.join(' '));
+  // ...but the same table written two ways still shares one pool.
+  assert.equal(
+    matchProduct('Pool table', 'furniture').product_key,
+    matchProduct('Pool Tables - moving sale', 'furniture').product_key
+  );
 });

@@ -1,34 +1,43 @@
 import {
   VENUES, BULKY_VENUES, SCORING, ACTIVE_TO_REALIZED, LOCAL_ASK_TO_REALIZED,
-  RETAIL_ANCHOR_WEIGHT, ACTIVE_ANCHOR_WEIGHT,
+  MIN_RESALE_COMPS,
   shippingFor, pickupCost, confidenceFor, isBulky,
 } from './config.js';
 
-// Blend the two anchors we can get for free. Marketplace Insights (real sold
-// comps) would replace this wholesale if access ever comes through.
-function anchorValue(comp) {
+// What the item resells for, from resale listings of the same condition.
+//
+// Marketplace Insights (real sold comps) would replace active asks wholesale if
+// access ever comes through. Until then: the median asking price on the matching
+// side, less the gap between asking and realized.
+//
+// eBay's new-condition listings are resale listings and are kept — they price a
+// new or like-new local item. They are never blended into a used one's value,
+// which is what ran valuations 2.3x high. See MIN_RESALE_COMPS in config.js.
+const NEW_BANDS = new Set(['new', 'like_new']);
+
+function anchorValue(comp, condition) {
   if (!comp) return null;
-  const retail = comp.retail_price ?? null;
 
   // Local comps are already local asking prices, so they take the haggle
   // discount here and the venue applies no further one. Discounting in both
-  // places would charge the same gap twice.
-  const discount = comp.source === 'local' ? LOCAL_ASK_TO_REALIZED : ACTIVE_TO_REALIZED;
-  const active = comp.active_median != null ? comp.active_median * discount : null;
-
+  // places would charge the same gap twice. Their floor is MIN_LOCAL_COMPS,
+  // applied where the pool is built.
   if (comp.source === 'local') {
-    return active != null ? { value: active, source: 'local' } : null;
+    return comp.active_median != null
+      ? { value: comp.active_median * LOCAL_ASK_TO_REALIZED, source: 'local' }
+      : null;
   }
 
-  if (retail != null && active != null) {
-    return {
-      value: retail * RETAIL_ANCHOR_WEIGHT + active * ACTIVE_ANCHOR_WEIGHT,
-      source: 'blended',
-    };
-  }
-  if (active != null) return { value: active, source: 'active' };
-  if (retail != null) return { value: retail, source: 'retail' };
-  return null;
+  const side =
+    NEW_BANDS.has(condition?.band) && (comp.n_new ?? 0) >= MIN_RESALE_COMPS
+      ? { median: comp.retail_price, n: comp.n_new ?? 0, source: 'retail' }
+      : { median: comp.active_median, n: comp.n_active ?? 0, source: 'active' };
+
+  // Too few resale listings to call it a market: decline to guess rather than
+  // publish a number built on one seller's asking price.
+  if (side.median == null || side.n < MIN_RESALE_COMPS) return null;
+
+  return { value: side.median * ACTIVE_TO_REALIZED, source: side.source };
 }
 
 function netForVenue(grossBase, venue) {
@@ -45,7 +54,7 @@ function liquidityFor() {
 }
 
 export function scoreListing({ listing, comp, condition, match }) {
-  const anchor = anchorValue(comp);
+  const anchor = anchorValue(comp, condition);
   const now = Date.now();
 
   const base = {

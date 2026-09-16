@@ -112,14 +112,25 @@ function matchBulky(tokens, brand, term) {
     (t) => !termWords.includes(t.replace(/s$/, '')) && !termWords.includes(t) && (MATERIALS.has(t) || FORMS.has(t))
   );
 
-  const kept = [...new Set([...(brand ? [brand] : []), type, ...modifiers.slice(0, 3)])];
+  // The word in front of the type says which kind it is: a pool table, a poker
+  // table and a foosball table are three products, and keying them all as
+  // "table" priced them from one pool of comps at an identical $300.
+  const at = tokens.findIndex((t) => t === termWords[0] || t.replace(/s$/, '') === termWords[0]);
+  const before = at > 0 ? tokens[at - 1] : null;
+  const kind =
+    before && !NOISE.has(before) && !MATERIALS.has(before) && !FORMS.has(before) &&
+    before !== brand && before.length >= 3 && !/^\d/.test(before)
+      ? [before]
+      : [];
+
+  const kept = [...new Set([...(brand ? [brand] : []), ...kind, type, ...modifiers.slice(0, 3)])];
 
   let score;
   let method;
-  if (brand && modifiers.length) {
+  if (brand && (modifiers.length || kind.length)) {
     score = 0.72;
     method = 'bulky:brand+type+attrs';
-  } else if (modifiers.length) {
+  } else if (modifiers.length || kind.length) {
     score = 0.65;
     method = 'bulky:type+attrs';
   } else if (brand) {

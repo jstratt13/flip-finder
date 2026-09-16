@@ -141,6 +141,8 @@ export async function fetchComps(env, { product_key, query, token, identity: id 
   const newItems = kept.filter((i) => sideOf(i) === 'new');
   const usedItems = kept.filter((i) => sideOf(i) === 'used');
 
+  // Both sides are resale listings; they differ only in the condition of what
+  // is being resold. score.js picks the side that matches the local item.
   const retail = summarize(newItems.map((i) => i.price));
   const used = summarize(usedItems.map((i) => i.price));
 
@@ -154,6 +156,7 @@ export async function fetchComps(env, { product_key, query, token, identity: id 
     active_p25: used.p25,
     active_p75: used.p75,
     n_active: used.n,
+    n_new: retail.n,
     source: 'ebay',
     n_results: items.length,
     n_relevant: kept.length,

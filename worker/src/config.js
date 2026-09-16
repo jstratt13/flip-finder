@@ -139,8 +139,20 @@ export const VENUES = {
 export const ACTIVE_TO_REALIZED = 0.8;
 
 // Retail anchor is list price for a new unit, so condition does the work.
-export const RETAIL_ANCHOR_WEIGHT = 0.45;
-export const ACTIVE_ANCHOR_WEIGHT = 0.55;
+// Comps are resale listings, and eBay's new-condition ones are resale listings
+// too — a sealed box from a private seller is a comp. What they are not is a
+// retail price for a used item: blending the new median into every valuation ran
+// production values at 2.3x the used median across 94 listings (2026-09-15), and
+// Jordan's price checks found them high nearly every time.
+//
+// So the side is chosen by the item's own condition (score.js): a NEW or
+// LIKE-NEW local listing is priced against new-condition comps, anything else
+// against used ones. Neither side is thrown away.
+
+// Below this many comps on the chosen side, a median is one seller's opinion
+// rather than a market. Production had 25 of 126 scored listings priced on one
+// or two.
+export const MIN_RESALE_COMPS = 3;
 
 export const SHIPPING = {
   // Crude weight-free estimate by price band until outcome data replaces it.
