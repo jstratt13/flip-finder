@@ -72,12 +72,12 @@ test('pickup listing: profit nets out drive cost and passes gates', () => {
     comp: { ...comp, active_median: 400 }, condition, match,
   });
 
-  // A "good condition" item is priced off used comps alone: 400 * 0.8 = 320.
+  // A "good condition" item is priced off used comps alone: 400 * 0.9 = 360.
   // The new-condition median belongs to a different condition of the item.
-  assert.ok(Math.abs(s.anchor_value - 320) < 0.01, `anchor was ${s.anchor_value}`);
+  assert.ok(Math.abs(s.anchor_value - 360) < 0.01, `anchor was ${s.anchor_value}`);
   assert.equal(s.anchor_source, 'active');
-  // acquisition = 100 + (10mi round trip * 0.35) = 107
-  assert.ok(Math.abs(s.acquisition_cost - 107) < 0.01);
+  // acquisition = 100 + (10mi round trip * $0.60) = 112
+  assert.ok(Math.abs(s.acquisition_cost - 112) < 0.01);
   assert.ok(s.profit > 0);
   // v2 confidence is written beside the score by resolve.js, so the gate sees
   // the stored row, not scoreListing's return.
@@ -105,17 +105,17 @@ test('shipped listing: takes freight cost, never a distance penalty', () => {
   assert.ok(shipped.profit > 0);
 });
 
-test('venue blend sits between the two single-venue nets', () => {
+test('everything sells locally, so the blend is the Facebook net', () => {
   const condition = assessCondition({ title: 'X', description: 'good condition' });
   const s = scoreListing({
     listing: { id: 'x:1', price: 100, acquisition_mode: 'pickup', distance_mi: 5 },
     comp, condition, match,
   });
 
-  // FB nets more per unit (no fees/shipping) but realises a lower gross price.
-  assert.ok(s.est_net_fb > s.est_net_ebay);
-  assert.ok(s.est_net_blended < s.est_net_fb);
-  assert.ok(s.est_net_blended > s.est_net_ebay);
+  // eBay's net is still computed for comparison, and still lower: same haggle
+  // factor, but its fees come off the top.
+  assert.ok(Math.abs(s.est_net_blended - s.est_net_fb) < 0.001);
+  assert.ok(s.est_net_ebay < s.est_net_fb);
 });
 
 test('no comp data means no score rather than a fabricated one', () => {
@@ -166,14 +166,14 @@ test('a new or like-new listing is priced against new-condition comps', () => {
     listing, comp, match,
     condition: assessCondition({ title: 'X', description: 'brand new, sealed in box' }),
   });
-  // 400 * 0.8, from the new-condition listings — not the used median.
+  // 400 * 0.9, from the new-condition listings — not the used median.
   assert.equal(sealed.anchor_source, 'retail');
-  assert.ok(Math.abs(sealed.anchor_value - 320) < 0.01, `anchor was ${sealed.anchor_value}`);
+  assert.ok(Math.abs(sealed.anchor_value - 360) < 0.01, `anchor was ${sealed.anchor_value}`);
 
   // Unknown condition keeps the conservative side.
   const unknown = scoreListing({ listing, comp, match, condition: null });
   assert.equal(unknown.anchor_source, 'active');
-  assert.ok(Math.abs(unknown.anchor_value - 200) < 0.01);
+  assert.ok(Math.abs(unknown.anchor_value - 225) < 0.01);
 });
 
 test('new-condition comps are only used when there are enough of them', () => {

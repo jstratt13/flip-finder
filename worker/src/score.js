@@ -74,7 +74,10 @@ export function scoreListing({ listing, comp, condition, match }) {
 
   if (!anchor || listing.price == null) return base;
 
-  const grossBase = anchor.value * (condition?.multiplier ?? 0.65);
+  // Every band except fair multiplies by 1.0: the comps are already the item's
+  // own condition, so discounting again would charge it twice. See
+  // CONDITION_BANDS for why fair is the exception and parts is unreachable.
+  const grossBase = anchor.value * (condition?.multiplier ?? 1.0);
 
   // A sofa is not going on eBay. Pricing one with a 33% eBay share and $25 of
   // freight overstates the net by more than the entire margin.

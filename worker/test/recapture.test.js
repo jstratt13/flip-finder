@@ -287,3 +287,22 @@ test('whole vehicles are refused at ingest; their parts are not', async (t) => {
   assert.deepEqual(stored(db), ['craigslist:battery']);
   assert.match(r.rejected[0].error, /^vehicle/);
 });
+
+test('a listing sold for parts never enters the system', async (t) => {
+  withClock(t, T0);
+  const db = d1();
+
+  for (const [id, text] of [
+    ['broken', 'Works intermittently, sold as-is for parts.'],
+    ['repair', 'Screen needs repair, everything else fine.'],
+    ['dead', 'Not working, no power.'],
+  ]) {
+    const r = await ingestBatch(db, [bare({ source_id: id, description: text })]);
+    assert.equal(r.accepted, 0, text);
+    assert.equal(r.rejected[0].error, 'sold for parts');
+  }
+
+  // Damaged but working is a different thing, and still priced — at a discount.
+  const fair = await ingestBatch(db, [bare({ source_id: 'cracked', description: 'Cracked corner, works fine.' })]);
+  assert.equal(fair.accepted, 1);
+});

@@ -3,14 +3,25 @@
 
 export const HOME = { zip: '92649', lat: 33.7172, lon: -118.0453 };
 
+// eBay's used comps are working used items — "for parts or not working" is
+// condition 7000 and we never ask for it — so a used listing's price already
+// carries "used". Discounting again for good, like-new or new condition would
+// charge it twice (Jordan, 2026-09-16), which is why those are 1.0.
+//
+// fair is the exception, and the only one: visibly damaged but working. Sellers
+// list cracked, dented, torn or water-damaged items as parts, so they are
+// missing from the pool a fair item is priced against. Parts listings are
+// refused at ingest, so 0.3 is now unreachable; it stays as documentation of
+// what the band meant.
 export const CONDITION_BANDS = {
   new: { multiplier: 1.0 },
-  like_new: { multiplier: 0.88 },
-  good: { multiplier: 0.75 },
+  like_new: { multiplier: 1.0 },
+  good: { multiplier: 1.0 },
   fair: { multiplier: 0.55 },
   parts: { multiplier: 0.3 },
-  unknown: { multiplier: 0.65 },
+  unknown: { multiplier: 1.0 },
 };
+
 
 // Things that realistically cannot be shipped for a sane price. Selling these
 // means a local cash sale, so modelling an eBay share with $25 freight on a
@@ -116,27 +127,35 @@ export const BULKY_VENUES = {
 export const LOCAL_ASK_TO_REALIZED = 0.85;
 export const MIN_LOCAL_COMPS = 4;
 
+// Everything sells locally on Facebook (Jordan, 2026-09-16): he isn't shipping,
+// so eBay's share is zero and no venue subtracts outbound freight. The eBay row
+// stays because est_net_ebay is still shown for comparison, and because the day
+// he ships again this is where that comes back — with ships: true and the
+// SHIPPING bands below.
+//
+// The haggle discount is 10% at either venue: an asking price is an opening
+// offer wherever it is posted.
 export const VENUES = {
   facebook: {
-    share: 0.667,
-    // Local cash sale: no platform cut, no shipping. But a local buyer pool
-    // haggles, so realized price lands below the national comp.
+    share: 1.0,
     fee_rate: 0.0,
     flat_fee: 0.0,
     ships: false,
-    price_factor: 0.85,
+    price_factor: 0.9,
   },
   ebay: {
-    share: 0.333,
+    share: 0.0,
     fee_rate: 0.1325,
     flat_fee: 0.4,
-    ships: true,
-    price_factor: 1.0,
+    ships: false,
+    price_factor: 0.9,
   },
 };
 
 // Asking prices sit above realized prices; discount active-listing medians.
-export const ACTIVE_TO_REALIZED = 0.8;
+// 0.9 (Jordan, 2026-09-16) — the venue's own 10% haggle factor now carries the
+// rest of the gap, so a deeper cut here would charge it twice.
+export const ACTIVE_TO_REALIZED = 0.9;
 
 // Retail anchor is list price for a new unit, so condition does the work.
 // Comps are resale listings, and eBay's new-condition ones are resale listings
@@ -154,6 +173,9 @@ export const ACTIVE_TO_REALIZED = 0.8;
 // or two.
 export const MIN_RESALE_COMPS = 3;
 
+// Unused while nothing ships (every venue has ships: false). Kept for the day
+// shipping comes back — and it needs replacing with something weight-aware then,
+// since price is a poor proxy: a snowboard and a camera lens are not both $25.
 export const SHIPPING = {
   // Crude weight-free estimate by price band until outcome data replaces it.
   default_outbound: 14.0,
@@ -173,7 +195,8 @@ export const SHIPPING = {
 export const CAPTURE_PRICE = { min: 5, max: 1000 };
 
 export const PICKUP = {
-  cost_per_mile: 0.35,
+  // Jordan, 2026-09-16. Vehicle cost only; time is still not priced.
+  cost_per_mile: 0.6,
   round_trip: true,
   max_distance_mi: 40,
 };

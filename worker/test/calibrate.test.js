@@ -60,8 +60,9 @@ test('measures the real venue mix against the assumed one', () => {
   const fb = c.venue_mix.find((v) => v.venue === 'facebook');
   assert.equal(fb.sales, 6);
   assert.ok(Math.abs(fb.measured_share - 0.6) < 0.001);
-  // The 0.667 starting guess is what this is meant to replace.
-  assert.ok(Math.abs(fb.configured_share - 0.667) < 0.001);
+  // Everything is assumed to sell on Facebook now; measured share is what says
+  // whether that holds.
+  assert.ok(Math.abs(fb.configured_share - 1.0) < 0.001);
 });
 
 test('suggests a price factor from what venues actually returned', () => {
@@ -71,8 +72,8 @@ test('suggests a price factor from what venues actually returned', () => {
 
   assert.equal(fb.sales, 10);
   assert.ok(Math.abs(fb.median_ratio - 0.9) < 0.001);
-  // 0.85 current × 0.9 observed = 0.765
-  assert.ok(Math.abs(fb.suggested_price_factor - 0.765) < 0.001);
+  // 0.9 current × 0.9 observed = 0.81
+  assert.ok(Math.abs(fb.suggested_price_factor - 0.81) < 0.001);
 });
 
 test('a thin group reports its ratio but suggests nothing', () => {
@@ -89,9 +90,10 @@ test('condition multipliers are checked against realised value', () => {
   const c = calibrate(many(8, { band: 'like_new', ratio: 0.8 }));
   const band = c.by_condition.find((b) => b.band === 'like_new');
 
-  assert.equal(band.current_multiplier, 0.88);
-  // 0.88 × 0.8 = 0.704
-  assert.ok(Math.abs(band.suggested_multiplier - 0.704) < 0.001);
+  // Like-new is 1.0 now: the comps are already new-condition listings. If sales
+  // say otherwise, this is where it shows up.
+  assert.equal(band.current_multiplier, 1.0);
+  assert.ok(Math.abs(band.suggested_multiplier - 0.8) < 0.001);
 });
 
 test('reports the share of predictions that landed close', () => {

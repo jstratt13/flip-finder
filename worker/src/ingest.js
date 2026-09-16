@@ -164,16 +164,22 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
       description: m.description || '',
       condition_raw: m.condition_raw || '',
     }).band;
-    statedCondition.set(id, band !== 'unknown');
+    statedCondition.set(id, band === 'parts' ? 'parts' : band !== 'unknown');
   }
 
   const withCondition = [];
   for (const n of inRange) {
-    if (statedCondition.get(n.id)) { withCondition.push(n); continue; }
+    const stated = statedCondition.get(n.id);
+    if (stated === true) { withCondition.push(n); continue; }
     const m = merged.get(n.id);
     rejected.push({
       source_id: n.source_id,
-      error: m?.description ? 'description states no condition' : 'no description',
+      error:
+        // "For parts", "not working", "needs repair": a different market, and
+        // one eBay's used comps say nothing about (Jordan, 2026-09-16).
+        stated === 'parts' ? 'sold for parts'
+          : m?.description ? 'description states no condition'
+            : 'no description',
     });
   }
 

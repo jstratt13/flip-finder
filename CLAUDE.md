@@ -36,6 +36,7 @@ https://claude.ai/artifact/S9E3zJQvturGPAC1WEj7cY — read it first.
 - **Refused at ingest (Jordan's rules):** no price, price < $5 or > $1,000, whole vehicles
   (parts are fine), and **any new listing whose condition nobody stated** — no description at all,
   or a description that never mentions condition. Title words and a source condition field count.
+  **Listings sold for parts are refused too** ("for parts", "not working", "needs repair", "as-is").
   Listings already stored are never refused, so a later grid card still carries a price drop in.
 - **Free tier only** unless Jordan approves otherwise (Workers Paid at $5/mo is his open call).
 - **Stack:** Vite + React (hooks) + plain CSS in `src/index.css`. No TypeScript, Tailwind,

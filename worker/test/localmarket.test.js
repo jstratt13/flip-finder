@@ -39,8 +39,8 @@ test('measures the local discount across products', () => {
   assert.equal(r.ready, true);
   assert.equal(r.products_compared, 12);
   assert.ok(Math.abs(r.median_ratio - 0.8) < 0.001);
-  // 0.85 current × 0.8 observed = 0.68
-  assert.ok(Math.abs(r.suggested_price_factor - 0.68) < 0.001);
+  // 0.9 current × 0.8 observed = 0.72
+  assert.ok(Math.abs(r.suggested_price_factor - 0.72) < 0.001);
 });
 
 test('an expensive local market is captured, not suppressed', () => {
