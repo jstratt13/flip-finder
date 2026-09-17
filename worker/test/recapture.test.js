@@ -306,3 +306,78 @@ test('a listing sold for parts never enters the system', async (t) => {
   const fair = await ingestBatch(db, [bare({ source_id: 'cracked', description: 'Cracked corner, works fine.' })]);
   assert.equal(fair.accepted, 1);
 });
+
+// ------------------------------------------------ market observations
+
+const observation = (db, id) =>
+  db.raw.prepare('SELECT * FROM market_observations WHERE id = ?').get(id);
+
+test('every capture is kept as market data, including refused ones', async (t) => {
+  withClock(t, T0);
+  const db = d1();
+
+  // Refused three different ways: no condition, sold for parts, out of range.
+  await ingestBatch(db, [
+    bare({ source_id: 'silent' }),
+    bare({ source_id: 'broken', description: 'Not working, for parts.' }),
+    bare({ source_id: 'dear', price: 4000, condition_raw: 'good' }),
+    detail({ source_id: 'kept' }),
+  ]);
+
+  assert.equal(db.raw.prepare('SELECT COUNT(*) n FROM listings').get().n, 1, 'one listing stored');
+  assert.equal(db.raw.prepare('SELECT COUNT(*) n FROM market_observations').get().n, 4, 'all four observed');
+
+  assert.equal(observation(db, 'craigslist:silent').refused_reason, 'no description');
+  assert.equal(observation(db, 'craigslist:broken').refused_reason, 'sold for parts');
+  assert.equal(observation(db, 'craigslist:dear').price, 4000);
+  // A capture that became a listing is market data too, and carries no reason.
+  assert.equal(observation(db, 'craigslist:kept').refused_reason, null);
+
+  // The product key is computed here: a refused capture never reaches the matcher.
+  assert.ok(observation(db, 'craigslist:silent').product_key);
+});
+
+test('a re-capture at the same price writes nothing', async (t) => {
+  const tick = withClock(t, T0);
+  const db = d1();
+  await ingestBatch(db, [bare({ source_id: 'still' })]);
+  const before = observation(db, 'craigslist:still').last_seen;
+
+  tick(60 * 1000);
+  await ingestBatch(db, [bare({ source_id: 'still' })]);
+  assert.equal(observation(db, 'craigslist:still').last_seen, before, 'no write for an unchanged re-capture');
+
+  // A price drop is the whole point of watching, so that does write.
+  tick(60 * 1000);
+  await ingestBatch(db, [bare({ source_id: 'still', price: 120 })]);
+  assert.equal(observation(db, 'craigslist:still').price, 120);
+});
+
+test('refused captures become the local comp pool', async (t) => {
+  withClock(t, T0);
+  const db = d1();
+  const { fetchLocalComps } = await import('../src/localcomps.js');
+  const { matchProduct } = await import('../src/match.js');
+
+  const key = matchProduct('Brown leather sectional couch', 'furniture').product_key;
+  assert.ok(key.startsWith('local:'), key);
+
+  // Five sofas browsed, none of which states a condition — all refused, and
+  // before this table they were dropped on the floor.
+  for (const [i, price] of [400, 500, 600, 700, 800].entries()) {
+    const r = await ingestBatch(db, [
+      bare({ source_id: `sofa${i}`, title: 'Brown leather sectional couch', price, category: 'furniture' }),
+    ]);
+    assert.equal(r.accepted, 0);
+  }
+  // ...plus a broken one, which says nothing about a working sofa's value.
+  await ingestBatch(db, [
+    bare({ source_id: 'wrecked', title: 'Brown leather sectional couch', price: 50,
+           category: 'furniture', description: 'Frame is broken, sold as-is for parts.' }),
+  ]);
+
+  const comps = await fetchLocalComps(db, { product_key: key });
+  assert.equal(comps.n_active, 5, 'five working sofas, the parts one left out');
+  assert.equal(comps.active_median, 600);
+  assert.equal(comps.source, 'local');
+});

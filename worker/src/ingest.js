@@ -1,5 +1,6 @@
 import { HOME, haversineMi, CAPTURE_PRICE } from './config.js';
 import { assessCondition } from './condition.js';
+import { matchProduct, MATCHER_VERSION } from './match.js';
 import { categorize } from './categorize.js';
 import { coordsForCity } from './cities.js';
 import { allIn } from './d1.js';
@@ -89,6 +90,14 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
   const accepted = [];
   const rejected = [];
 
+  // What the local market is asking, kept whatever the gates decide below.
+  // Written on every path out of this function: refused captures are the bulk
+  // of what is browsed, and they are the reason the table exists.
+  const recordObservations = async () => {
+    const obs = observationStmts(db, items, rejected, origin, now);
+    if (obs.length) await db.batch(obs);
+  };
+
   for (const raw of items) {
     const n = normalize(raw, origin);
     if (n.error) {
@@ -98,7 +107,10 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
     accepted.push(n);
   }
 
-  if (!accepted.length) return { received: items.length, accepted: 0, rejected, results: [] };
+  if (!accepted.length) {
+    await recordObservations();
+    return { received: items.length, accepted: 0, rejected, results: [] };
+  }
 
   // Read what's already stored so we can record genuine changes rather than
   // rewriting every row on every re-capture, and judge condition from
@@ -185,7 +197,10 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
 
   accepted.length = 0;
   accepted.push(...withCondition);
-  if (!accepted.length) return { received: items.length, accepted: 0, rejected, results: [] };
+  if (!accepted.length) {
+    await recordObservations();
+    return { received: items.length, accepted: 0, rejected, results: [] };
+  }
 
   // Condition inputs merged the way the listing upsert merges them: a capture's
   // value wins, a missing one keeps what's stored. A grid card carries no
@@ -323,6 +338,7 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
   }
 
   await db.batch(stmts);
+  await recordObservations();
 
   // Scores are returned per listing so the extension can annotate cards in-page
   // later without changing this contract. Null until matching and comps land.
@@ -343,3 +359,68 @@ export async function ingestBatch(db, items, origin = HOME, capturedBy = null) {
     })),
   };
 }
+
+// One row per captured listing, whatever ingest decided about it.
+//
+// The price and the product key are what make it useful later, so both are
+// computed here rather than by the cron: a refused capture never reaches the
+// matcher. Re-captures update the price and last_seen, and the WHERE clause
+// keeps an unchanged re-capture from costing a D1 write.
+function observationStmts(db, items, rejected, origin, now) {
+  const refusedFor = new Map();
+  for (const r of rejected) if (r.source_id != null) refusedFor.set(String(r.source_id), r.error);
+
+  const seen = new Set();
+  const stmts = [];
+  for (const raw of items) {
+    const n = normalize(raw, origin);
+    if (n.error || !n.title || seen.has(n.id)) continue;
+    seen.add(n.id);
+
+    const m = matchProduct(n.title, n.category ?? '');
+    const band = assessCondition({
+      title: n.title ?? '',
+      description: n.description ?? '',
+      condition_raw: n.condition_raw ?? '',
+    }).band;
+
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO market_observations (
+             id, source, source_id, title, price, condition_band, category, product_key,
+             matcher_version, location_name, refused_reason, first_seen, last_seen
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT (id) DO UPDATE SET
+             price = COALESCE(excluded.price, market_observations.price),
+             title = excluded.title,
+             -- A later grid card carries no description; it must not downgrade
+             -- what a detail page established, nor blank a key it can't compute.
+             condition_band = CASE WHEN excluded.condition_band = 'unknown'
+                                   THEN market_observations.condition_band
+                                   ELSE excluded.condition_band END,
+             product_key = COALESCE(excluded.product_key, market_observations.product_key),
+             matcher_version = COALESCE(excluded.matcher_version, market_observations.matcher_version),
+             refused_reason = excluded.refused_reason,
+             last_seen = excluded.last_seen
+           WHERE market_observations.price IS NOT excluded.price
+              OR (excluded.condition_band IS NOT 'unknown'
+                  AND market_observations.condition_band IS NOT excluded.condition_band)
+              OR (excluded.product_key IS NOT NULL
+                  AND market_observations.product_key IS NOT excluded.product_key)
+              OR market_observations.last_seen < excluded.last_seen - ?`
+        )
+        .bind(
+          n.id, n.source, n.source_id, n.title, n.price ?? null, band, n.category ?? null,
+          m?.product_key ?? null, m ? MATCHER_VERSION : null, n.location_name ?? null,
+          refusedFor.get(String(n.source_id)) ?? null, now, now,
+          OBSERVATION_REFRESH_MS
+        )
+    );
+  }
+  return stmts;
+}
+
+// How stale an observation gets before a re-capture is worth a write purely to
+// refresh last_seen. Recency is what decides whether it still counts as a comp.
+const OBSERVATION_REFRESH_MS = 6 * 60 * 60 * 1000;

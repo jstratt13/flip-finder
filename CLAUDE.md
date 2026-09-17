@@ -63,6 +63,7 @@ https://claude.ai/artifact/S9E3zJQvturGPAC1WEj7cY — read it first.
 ```
 extension/ ── capture (grid + detail) ──▶ POST /ingest
 worker/    ── ingest ─▶ D1 listings ─▶ cron: sweep → re-match → queue → match → comps → score
+           └─ every capture, refused or not ─▶ market_observations (local comps; never scored)
 src/       ── dashboard: Opportunities · Captured · Watchlist · Inventory
 research/  ── offline analysis scripts (tracked); data in research/ebay-sample-*/, research/out/ (ignored)
 ```
@@ -77,7 +78,7 @@ Key worker files:
 | `src/match.js` | Title → `product_key` + `match_score`; `MATCHER_VERSION` bump re-matches everything |
 | `src/identity.js` | Title identity (brand/line/code/generation/variant) → eBay query; judges eBay results |
 | `src/ebay.js` | OAuth, one combined new+used search per product, relevance-filtered comps |
-| `src/localcomps.js` | Bulky goods priced from local asks |
+| `src/localcomps.js` | Bulky goods priced from local asks (reads `market_observations`) |
 | `src/resolve.js` | Cron orchestration; subrequest budget; indexed scoring queue with backoff; shadow v2 |
 | `src/score.js` | Profit/ROI/confidence (v1) and ranking score |
 | `src/valuation-confidence.js` | Confidence v2 = P(right product) × P(within 25% \| right). **Shadow only** |

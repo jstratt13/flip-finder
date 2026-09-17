@@ -15,15 +15,22 @@ const RECENCY_MS = 60 * 24 * 60 * 60 * 1000;
 // runs conservative: a bargain drags the median toward itself, understating its
 // own profit rather than inflating it.
 export async function fetchLocalComps(db, { product_key }) {
+  // Read from market_observations, not listings: every capture lands there,
+  // including the ones ingest refused. Those refusals are rules about what
+  // Jordan would buy — no stated condition, outside his price range — not
+  // about what the local market is asking, and they are most of what is
+  // browsed. Listings that were accepted are in this table too.
+  //
+  // Parts listings are the exception: a broken one's asking price says nothing
+  // about a working one's value.
   const { results } = await db
     .prepare(
-      `SELECT l.price
-       FROM listings l
-       JOIN listing_matches m ON m.listing_id = l.id
-       WHERE m.product_key = ?
-         AND l.price > 0
-         AND l.status = 'active'
-         AND l.last_seen >= ?`
+      `SELECT price
+       FROM market_observations
+       WHERE product_key = ?
+         AND price > 0
+         AND condition_band IS NOT 'parts'
+         AND last_seen >= ?`
     )
     .bind(product_key, Date.now() - RECENCY_MS)
     .all();
