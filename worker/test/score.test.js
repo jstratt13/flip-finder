@@ -198,3 +198,19 @@ test('one or two resale listings is not a market', () => {
     assert.equal(s.score, null);
   }
 });
+
+test('the condition multiplier comes from config, not the frozen column', () => {
+  // conditions.multiplier is written at ingest and never revisited, so a stale
+  // one must not survive a config change. Production kept an 0.88 like-new
+  // haircut for hours after like_new became 1.0 this way.
+  const stale = { band: 'like_new', multiplier: 0.88, confidence: 0.9 };
+  const s = scoreListing({
+    listing: { id: 'x:5', price: 100, acquisition_mode: 'pickup', distance_mi: 0 },
+    comp: { retail_price: 400, active_median: 200, n_active: 10, n_new: 0 },
+    condition: stale,
+    match,
+  });
+  // 200 * 0.9 = 180 anchor, no condition haircut, 10% haggle = 162.
+  assert.ok(Math.abs(s.anchor_value - 180) < 0.01, `anchor ${s.anchor_value}`);
+  assert.ok(Math.abs(s.est_net_fb - 162) < 0.01, `net ${s.est_net_fb} — 0.88 would give 142.56`);
+});

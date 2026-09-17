@@ -1,6 +1,6 @@
 import {
   VENUES, BULKY_VENUES, SCORING, ACTIVE_TO_REALIZED, LOCAL_ASK_TO_REALIZED,
-  MIN_RESALE_COMPS,
+  MIN_RESALE_COMPS, CONDITION_BANDS,
   shippingFor, pickupCost, confidenceFor, isBulky,
 } from './config.js';
 
@@ -77,7 +77,14 @@ export function scoreListing({ listing, comp, condition, match }) {
   // Every band except fair multiplies by 1.0: the comps are already the item's
   // own condition, so discounting again would charge it twice. See
   // CONDITION_BANDS for why fair is the exception and parts is unreachable.
-  const grossBase = anchor.value * (condition?.multiplier ?? 1.0);
+  //
+  // Read from config by band, NOT from conditions.multiplier: that column is
+  // frozen at ingest and keeps whatever the multiplier was the day the listing
+  // was assessed. Reading it meant a config change reached only listings
+  // captured afterwards — a like-new iPhone kept an 0.88 haircut hours after
+  // like_new became 1.0, and nothing short of re-ingesting would have cleared it.
+  const band = condition?.band;
+  const grossBase = anchor.value * (CONDITION_BANDS[band]?.multiplier ?? 1.0);
 
   // A sofa is not going on eBay. Pricing one with a 33% eBay share and $25 of
   // freight overstates the net by more than the entire margin.
