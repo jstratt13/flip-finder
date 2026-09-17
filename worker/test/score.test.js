@@ -112,8 +112,8 @@ test('everything sells locally, so the blend is the Facebook net', () => {
     comp, condition, match,
   });
 
-  // eBay's net is still computed for comparison, and still lower: same haggle
-  // factor, but its fees come off the top.
+  // eBay's net is still computed for comparison, and still lower: its fees come
+  // off the top.
   assert.ok(Math.abs(s.est_net_blended - s.est_net_fb) < 0.001);
   assert.ok(s.est_net_ebay < s.est_net_fb);
 });
@@ -210,7 +210,7 @@ test('the condition multiplier comes from config, not the frozen column', () => 
     condition: stale,
     match,
   });
-  // 200 * 0.9 = 180 anchor, no condition haircut, 10% haggle = 162.
+  // 200 * 0.9 = 180 anchor, no condition haircut, no venue discount.
   assert.ok(Math.abs(s.anchor_value - 180) < 0.01, `anchor ${s.anchor_value}`);
-  assert.ok(Math.abs(s.est_net_fb - 162) < 0.01, `net ${s.est_net_fb} — 0.88 would give 142.56`);
+  assert.ok(Math.abs(s.est_net_fb - 180) < 0.01, `net ${s.est_net_fb} — 0.88 would give 158.40`);
 });
