@@ -134,31 +134,34 @@ export const MIN_LOCAL_COMPS = 4;
 // he ships again this is where that comes back — with ships: true and the
 // SHIPPING bands below.
 //
-// No venue discount: the one 10% haircut lives in ACTIVE_TO_REALIZED, on the
-// anchor (Jordan, 2026-09-16). Charging it again here discounted the same gap
-// twice — an asking price becoming a realised price, then becoming a realised
-// price again.
+// The 10% gap between an asking price and a realised one is charged here, on
+// the way to the net, and nowhere else (Jordan, 2026-09-16). That leaves the
+// anchor reading as the market price the comps actually show, and the net as
+// what the sale is expected to return — which is the distinction the two
+// numbers exist to draw.
 export const VENUES = {
   facebook: {
     share: 1.0,
     fee_rate: 0.0,
     flat_fee: 0.0,
     ships: false,
-    price_factor: 1.0,
+    price_factor: 0.9,
   },
   ebay: {
     share: 0.0,
     fee_rate: 0.1325,
     flat_fee: 0.4,
     ships: false,
-    price_factor: 1.0,
+    price_factor: 0.9,
   },
 };
 
-// Asking prices sit above realized prices; discount comp medians. 0.9 (Jordan,
-// 2026-09-16), and the only such discount in the model: the venues' price
-// factors are 1.0 so this gap is charged once.
-export const ACTIVE_TO_REALIZED = 0.9;
+// 1.0: comp medians are carried through to the anchor as they are, so the
+// anchor is what the market shows. The asking-to-realised gap is taken once, as
+// the venues' price_factor (Jordan, 2026-09-16). Kept as a named constant
+// because eBay's own asking prices are not sold prices, and the day Marketplace
+// Insights access arrives this is where that correction belongs.
+export const ACTIVE_TO_REALIZED = 1.0;
 
 // Retail anchor is list price for a new unit, so condition does the work.
 // Comps are resale listings, and eBay's new-condition ones are resale listings

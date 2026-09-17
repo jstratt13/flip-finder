@@ -72,9 +72,9 @@ test('pickup listing: profit nets out drive cost and passes gates', () => {
     comp: { ...comp, active_median: 400 }, condition, match,
   });
 
-  // A "good condition" item is priced off used comps alone: 400 * 0.9 = 360.
-  // The new-condition median belongs to a different condition of the item.
-  assert.ok(Math.abs(s.anchor_value - 360) < 0.01, `anchor was ${s.anchor_value}`);
+  // A "good condition" item is priced off used comps alone, and the anchor is
+  // the median itself: the haggle discount comes off on the way to the net.
+  assert.ok(Math.abs(s.anchor_value - 400) < 0.01, `anchor was ${s.anchor_value}`);
   assert.equal(s.anchor_source, 'active');
   // acquisition = 100 + (10mi round trip * $0.60) = 112
   assert.ok(Math.abs(s.acquisition_cost - 112) < 0.01);
@@ -166,14 +166,14 @@ test('a new or like-new listing is priced against new-condition comps', () => {
     listing, comp, match,
     condition: assessCondition({ title: 'X', description: 'brand new, sealed in box' }),
   });
-  // 400 * 0.9, from the new-condition listings — not the used median.
+  // The new-condition median, not the used one.
   assert.equal(sealed.anchor_source, 'retail');
-  assert.ok(Math.abs(sealed.anchor_value - 360) < 0.01, `anchor was ${sealed.anchor_value}`);
+  assert.ok(Math.abs(sealed.anchor_value - 400) < 0.01, `anchor was ${sealed.anchor_value}`);
 
   // Unknown condition keeps the conservative side.
   const unknown = scoreListing({ listing, comp, match, condition: null });
   assert.equal(unknown.anchor_source, 'active');
-  assert.ok(Math.abs(unknown.anchor_value - 225) < 0.01);
+  assert.ok(Math.abs(unknown.anchor_value - 250) < 0.01);
 });
 
 test('new-condition comps are only used when there are enough of them', () => {
@@ -210,7 +210,7 @@ test('the condition multiplier comes from config, not the frozen column', () => 
     condition: stale,
     match,
   });
-  // 200 * 0.9 = 180 anchor, no condition haircut, no venue discount.
-  assert.ok(Math.abs(s.anchor_value - 180) < 0.01, `anchor ${s.anchor_value}`);
+  // Anchor is the median; the 10% comes off on the way to the net.
+  assert.ok(Math.abs(s.anchor_value - 200) < 0.01, `anchor ${s.anchor_value}`);
   assert.ok(Math.abs(s.est_net_fb - 180) < 0.01, `net ${s.est_net_fb} — 0.88 would give 158.40`);
 });

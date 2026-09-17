@@ -72,9 +72,8 @@ test('suggests a price factor from what venues actually returned', () => {
 
   assert.equal(fb.sales, 10);
   assert.ok(Math.abs(fb.median_ratio - 0.9) < 0.001);
-  // 1.0 current × 0.9 observed = 0.9 — if sales keep landing 10% under, this
-  // is where a venue discount would earn its way back into config.
-  assert.ok(Math.abs(fb.suggested_price_factor - 0.9) < 0.001);
+  // 0.9 current × 0.9 observed = 0.81
+  assert.ok(Math.abs(fb.suggested_price_factor - 0.81) < 0.001);
 });
 
 test('a thin group reports its ratio but suggests nothing', () => {
