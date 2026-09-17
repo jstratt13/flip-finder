@@ -177,14 +177,20 @@ test('priced comps are kept for two weeks', async () => {
   assert.equal(comp.expires_at - comp.fetched_at, 14 * 24 * 60 * 60 * 1000);
 });
 
-test('one search per product asks for both conditions', async () => {
+test('one search per product asks for every resale condition but parts', async () => {
   const env = fakeEnv();
   const f = fakeFetch([400], [200]);
   await fetchComps(env, { product_key: 'x', query: 'x' }, f.impl);
 
   const searches = f.calls.filter((u) => u.includes('item_summary/search'));
-  assert.equal(searches.length, 1);
-  assert.ok(decodeURIComponent(searches[0]).includes('conditionIds:{1000|3000}'));
+  assert.equal(searches.length, 1, 'still one call per product');
+  const filter = decodeURIComponent(searches[0]);
+  // Open box and the refurbished grades are real resale comps and used to be
+  // discarded: 16 of 44 relevant results for one iPhone 12.
+  for (const id of ['1000', '1500', '2000', '2010', '2020', '2030', '2500', '3000']) {
+    assert.ok(filter.includes(id), `condition ${id} should be requested`);
+  }
+  assert.ok(!filter.includes('7000'), 'for parts is never a comp');
   assert.equal(new URL(searches[0]).searchParams.get('limit'), '50');
 });
 
@@ -204,7 +210,7 @@ test('condition text is used when a summary has no condition id', async () => {
   assert.equal(comp.n_active, 2);
 });
 
-test('conditions that were not asked for never leak into either side', async () => {
+test('each condition lands on the side that matches what a buyer gets', async () => {
   const env = fakeEnv();
   const impl = async (url) => {
     if (String(url).includes('oauth2/token')) {
@@ -215,17 +221,26 @@ test('conditions that were not asked for never leak into either side', async () 
       status: 200,
       json: async () => ({
         itemSummaries: [
-          { price: { value: '999' }, conditionId: '1500', condition: 'Open box' },
-          { price: { value: '5' }, conditionId: '7000', condition: 'For parts or not working' },
+          // Pristine side: what a like-new local listing competes with.
+          { price: { value: '300' }, conditionId: '1500', condition: 'Open box' },
+          { price: { value: '290' }, conditionId: '2010', condition: 'Excellent - Refurbished' },
+          { price: { value: '310' }, conditionId: '1000', condition: 'New' },
+          // Working side: a "Good - Refurbished" phone is a tidied-up used one.
           { price: { value: '200' }, conditionId: '3000', condition: 'Used' },
+          { price: { value: '210' }, conditionId: '2030', condition: 'Good - Refurbished' },
+          { price: { value: '190' }, conditionId: '2500', condition: 'Seller refurbished' },
+          // Never a comp, whatever else is on the page.
+          { price: { value: '5' }, conditionId: '7000', condition: 'For parts or not working' },
         ],
       }),
     };
   };
   const comp = await fetchComps(env, { product_key: 'x', query: 'x' }, impl);
-  assert.equal(comp.retail_price, null);
+  assert.equal(comp.n_new, 3, 'new, open box and excellent refurbished');
+  assert.equal(comp.retail_price, 300);
+  assert.equal(comp.n_active, 3, 'used, good refurbished and seller refurbished');
   assert.equal(comp.active_median, 200);
-  assert.equal(comp.n_active, 1);
+  assert.ok(comp.new_p25 > 0 && comp.new_p75 > 0, 'the pristine side carries its own spread');
 });
 
 test('comps are built only from results that are the listing product', async () => {

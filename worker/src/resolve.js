@@ -2,7 +2,7 @@ import { matchProduct, MATCHER_VERSION } from './match.js';
 import { fetchComps, getToken } from './ebay.js';
 import { fetchLocalComps } from './localcomps.js';
 import { scoreListing } from './score.js';
-import { FRESHNESS, isTooVague, pickupCost } from './config.js';
+import { FRESHNESS, isTooVague, pickupCost, MIN_RESALE_COMPS } from './config.js';
 import { identity } from './identity.js';
 import { confidence as valuationConfidence } from './valuation-confidence.js';
 import { allIn, chunk, placeholders } from './d1.js';
@@ -59,15 +59,21 @@ function shadowConfidence(listing, comp, condition, s) {
   const none = { confidence: null, pRight: null, pWithin: null, expectedProfit: null };
   if (!comp || (comp.active_median == null && comp.retail_price == null)) return none;
   const id = identity(listing.title ?? '');
+  // The same side score.js priced from: a like-new listing is valued against
+  // new, open-box and excellent-refurbished comps, so its spread is theirs.
+  const pristine =
+    ['new', 'like_new'].includes(condition?.band) && (comp.n_new ?? 0) >= MIN_RESALE_COMPS;
   const c = valuationConfidence({
     strength: id.strength,
     band: condition?.band ?? 'unknown',
     comps: {
-      n: comp.n_active ?? 0,
-      p25: comp.active_p25,
-      p75: comp.active_p75,
-      median: comp.active_median ?? comp.retail_price,
-      newMedian: comp.active_median != null ? comp.retail_price : null,
+      n: (pristine ? comp.n_new : comp.n_active) ?? 0,
+      p25: pristine ? comp.new_p25 : comp.active_p25,
+      p75: pristine ? comp.new_p75 : comp.active_p75,
+      median: pristine ? comp.retail_price : comp.active_median ?? comp.retail_price,
+      // New priced below used means the comps are a muddle. Only meaningful
+      // when the used side is what set the value.
+      newMedian: !pristine && comp.active_median != null ? comp.retail_price : null,
       source: comp.source ?? 'ebay',
       filtered: comp.source === 'local' || comp.filtered === 1,
       purity: comp.n_results ? (comp.n_relevant ?? 0) / comp.n_results : 0.3,
@@ -82,8 +88,9 @@ function upsertComp(db, c) {
   return db
     .prepare(
       `INSERT INTO comps (product_key, retail_price, active_median, active_p25, active_p75,
-                          n_active, n_new, source, n_results, n_relevant, filtered, fetched_at, expires_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          n_active, n_new, new_p25, new_p75, source, n_results, n_relevant,
+                          filtered, fetched_at, expires_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT (product_key) DO UPDATE SET
          retail_price = excluded.retail_price,
          active_median = excluded.active_median,
@@ -91,6 +98,8 @@ function upsertComp(db, c) {
          active_p75 = excluded.active_p75,
          n_active = excluded.n_active,
          n_new = excluded.n_new,
+         new_p25 = excluded.new_p25,
+         new_p75 = excluded.new_p75,
          source = excluded.source,
          n_results = excluded.n_results,
          n_relevant = excluded.n_relevant,
@@ -100,7 +109,8 @@ function upsertComp(db, c) {
     )
     .bind(
       c.product_key, c.retail_price, c.active_median, c.active_p25, c.active_p75,
-      c.n_active, c.n_new ?? null, c.source, c.n_results ?? null, c.n_relevant ?? null, c.filtered ?? 0,
+      c.n_active, c.n_new ?? null, c.new_p25 ?? null, c.new_p75 ?? null,
+      c.source, c.n_results ?? null, c.n_relevant ?? null, c.filtered ?? 0,
       c.fetched_at, c.expires_at
     );
 }

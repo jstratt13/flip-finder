@@ -5,7 +5,22 @@ const OAUTH_URL = 'https://api.ebay.com/identity/v1/oauth2/token';
 const SEARCH_URL = 'https://api.ebay.com/buy/browse/v1/item_summary/search';
 const SCOPE = 'https://api.ebay.com/oauth/api_scope';
 
-export const CONDITION = { NEW: '1000', USED: '3000' };
+// eBay's condition ids, grouped the way a local listing's condition maps onto
+// them. "For parts or not working" (7000) is deliberately absent: those
+// listings are refused at ingest and say nothing about a working item's value.
+//
+// The split is by what a buyer is getting, not by eBay's label: an "Excellent -
+// Refurbished" phone competes with a like-new private sale, while a "Good -
+// Refurbished" one is a used phone someone cleaned up. Before this, only 1000
+// and 3000 were requested at all — for one iPhone 12, that discarded 16 of 44
+// relevant listings, every refurbished and open-box comp on the page.
+export const CONDITION = {
+  // Sets the value for a local listing in new or like-new condition.
+  PRISTINE: ['1000', '1500', '2000', '2010', '2020'],
+  // ...and for everything else still working: good, fair.
+  WORKING: ['2030', '2500', '3000'],
+};
+CONDITION.ALL = [...CONDITION.PRISTINE, ...CONDITION.WORKING];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -99,15 +114,16 @@ export async function search(env, { query, conditionIds, limit = 50, token }, fe
 }
 
 // Which side of the comp an item belongs to. The numeric id is authoritative;
-// the text is a fallback in case a summary arrives without one. Anything else
-// (open box, refurbished) wasn't asked for and is left out rather than guessed.
+// the text is a fallback in case a summary arrives without one.
 function sideOf(item) {
-  if (item.conditionId === CONDITION.NEW) return 'new';
-  if (item.conditionId === CONDITION.USED) return 'used';
-  if (item.conditionId == null) {
-    if (/^new$/i.test(item.condition ?? '')) return 'new';
-    if (/^(used|pre-owned)$/i.test(item.condition ?? '')) return 'used';
+  if (item.conditionId != null) {
+    if (CONDITION.PRISTINE.includes(item.conditionId)) return 'new';
+    if (CONDITION.WORKING.includes(item.conditionId)) return 'used';
+    return null;
   }
+  const text = item.condition ?? '';
+  if (/^new$/i.test(text) || /open box/i.test(text) || /(certified|excellent|very good)\s*-?\s*refurbished/i.test(text)) return 'new';
+  if (/^(used|pre-owned)$/i.test(text) || /(good|seller)\s*-?\s*refurbished/i.test(text)) return 'used';
   return null;
 }
 
@@ -129,7 +145,7 @@ export async function fetchComps(env, { product_key, query, token, identity: id 
   // nothing", or retries would be suppressed long after an outage ends.
   const items = await search(
     env,
-    { query, conditionIds: [CONDITION.NEW, CONDITION.USED], limit: COMP_PAGE_SIZE, token },
+    { query, conditionIds: CONDITION.ALL, limit: COMP_PAGE_SIZE, token },
     fetchImpl
   );
   // Only results that are the listing's product count. Production's searches
@@ -164,6 +180,8 @@ export async function fetchComps(env, { product_key, query, token, identity: id 
     active_p75: used.p75,
     n_active: used.n,
     n_new: retail.n,
+    new_p25: retail.p25,
+    new_p75: retail.p75,
     source: 'ebay',
     n_results: items.length,
     n_relevant: kept.length,
